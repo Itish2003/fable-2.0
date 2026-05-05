@@ -20,11 +20,11 @@ Created in `src/tools/archivist_tools.py`. These tools natively mutate `FableAge
 
 ### B. Node Configuration
 *   **`StorytellerNode`**: 
-    *   *Model:* Gemini 1.5 Pro.
+    *   *Model:* `gemini-3.1-flash-lite-preview`
     *   *Prompt:* Purely creative, stripped of formatting rules.
     *   *Context:* Fed dynamically by the Phase 2 GraphRAG.
 *   **`ArchivistNode`**:
-    *   *Model:* Gemini 1.5 Flash (for speed and determinism).
+    *   *Model:* `gemini-3.1-flash-lite-preview` (for speed, determinism, and cost efficiency).
     *   *Planner:* `PlanReActPlanner(tool_choice="any")` (Forces tool usage, replacing V1's `_fallback_integrate_research`).
     *   *Tools:* The Tool Belt defined above.
 

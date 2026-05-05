@@ -12,6 +12,9 @@ class GlobalInstructionPlugin(BasePlugin):
     Replaces the monolithic, hardcoded tone strings from V1.
     """
     
+    def __init__(self):
+        super().__init__(name="global_instruction_plugin")
+    
     async def run_before_agent_callback(
         self,
         *,

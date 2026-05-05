@@ -32,15 +32,21 @@ async def run_auditor(
         
     logger.info(f"Auditor analyzing text length: {len(story_text)}")
     
-    # 1. Epistemic Boundary Check
-    if "Taurus Silver" in story_text and "Tatsuya" in story_text:
-        logger.warning("AUDIT FAILED: Epistemic leak detected.")
-        return "failed"
+    # 1. Epistemic Boundary Check (Dynamic)
+    story_lower = story_text.lower()
+    for concept in state.forbidden_concepts:
+        if concept.lower() in story_lower:
+            logger.warning(f"AUDIT FAILED: Epistemic leak detected. Used forbidden concept: {concept}")
+            return "failed"
 
-    # 2. Anti-Worf Check
-    if "Miyuki was easily defeated" in story_text:
-        logger.warning("AUDIT FAILED: Anti-Worf constraint broken.")
-        return "failed"
+    # 2. Anti-Worf Check (Dynamic)
+    defeat_keywords = ["defeated", "beaten", "lost easily", "overpowered by"]
+    for char_name, rule in state.anti_worf_rules.items():
+        if char_name.lower() in story_lower:
+            for keyword in defeat_keywords:
+                if keyword in story_lower:
+                    logger.warning(f"AUDIT FAILED: Anti-Worf constraint broken for {char_name}. Rule: {rule}")
+                    return "failed"
         
     logger.info("AUDIT PASSED: Text is canon-compliant.")
     return "passed"

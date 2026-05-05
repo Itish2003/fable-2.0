@@ -1,5 +1,5 @@
 from google.adk.workflow import Workflow
-from google.adk.workflow._graph_definitions import Edge
+from google.adk.workflow.utils._workflow_graph_utils import build_node
 
 from src.nodes.storyteller import create_storyteller_node
 from src.nodes.archivist import create_archivist_node
@@ -11,9 +11,13 @@ def build_fable_workflow() -> Workflow:
     This replaces the manual `run_pipeline` loop from V1.
     """
     
-    # 1. Instantiate Nodes
-    storyteller_node = create_storyteller_node()
-    archivist_node = create_archivist_node()
+    # 1. Instantiate Nodes (ADK agents must be wrapped using build_node for graph integration)
+    storyteller_agent = create_storyteller_node()
+    archivist_agent = create_archivist_node()
+    
+    storyteller_node = build_node(storyteller_agent)
+    archivist_node = build_node(archivist_agent)
+    
     # The auditor is a @node decorated function, so it's already a BaseNode instance
     auditor_node = run_auditor
     

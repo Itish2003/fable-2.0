@@ -79,6 +79,16 @@ class FableAgentState(BaseAgentState):
         description="List of canon events that have been altered in this timeline."
     )
 
+    # Dynamic Integrity Constraints
+    forbidden_concepts: List[str] = Field(
+        default_factory=list,
+        description="List of concepts/names the current POV character does not know (Epistemic Boundaries)."
+    )
+    anti_worf_rules: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of character names to their minimum competence/protection rules."
+    )
+
     # Global Aesthetic Metadata
     current_mood: str = Field(default="Neutral", description="The current atmosphere/pacing of the story.")
     chapter_count: int = Field(default=1, description="Current chapter sequence number.")

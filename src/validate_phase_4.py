@@ -33,7 +33,12 @@ async def validate_phase_4():
         
         ctx = MagicMock()
         mock_inv_ctx = MagicMock()
-        mock_inv_ctx.agent_states = {"auditor": FableAgentState()}
+        
+        test_state = FableAgentState(
+            forbidden_concepts=["Taurus Silver"],
+            anti_worf_rules={"Miyuki": "Cannot be defeated easily."}
+        )
+        mock_inv_ctx.agent_states = {"auditor": test_state}
         ctx.get_invocation_context.return_value = mock_inv_ctx
         
         # Test Pass (Since run_auditor is decorated with @node, we call the underlying func directly for testing)

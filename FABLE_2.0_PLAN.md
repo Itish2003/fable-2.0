@@ -59,10 +59,10 @@ Fable 2.0 moves from programmatic Python loops to a formal state machine using `
     1.  **Entry Node:** Receives user WebSocket command.
     2.  **Logic Node (`FunctionNode`):** Parses the command (`/research`, `/rewrite`, `/choice`) and directs execution to the appropriate branch via conditional edges.
     3.  **Research Branch:** Parallel `LoreHunterNode` instances fetch data, reconvening at a **`JoinNode`** to synchronize state.
-    4.  **Narrative Branch:** `StorytellerNode` generates prose.
+    4.  **Narrative Branch:** `StorytellerNode` generates prose using the highly efficient `gemini-3.1-flash-lite-preview` model.
     5.  **Interactive Branch:** `ChoiceGeneratorNode` executes immediately after the Storyteller to generate the "4 Choices".
     6.  **Audit Branch:** `AuditorNode` (`FunctionNode`) enforces Epistemic Boundaries and Anti-Worf rules via Python logic.
-    7.  **Archive Node:** `ArchivistNode` (`LlmAgentWrapper` + `ToolNode` configured with `PlanReActPlanner`) performs atomic state mutations via tools.
+    7.  **Archive Node:** `ArchivistNode` (`LlmAgentWrapper` + `ToolNode` configured with `PlanReActPlanner` and `gemini-3.1-flash-lite-preview`) performs atomic state mutations via tools.
 
 ---
 

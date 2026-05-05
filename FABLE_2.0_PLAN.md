@@ -66,17 +66,17 @@ Fable 2.0 moves from programmatic Python loops to a formal state machine using `
 
 ---
 
-## 3. The Lore Engine: GraphRAG & Primary Source Ingestion
+## 3. The Lore Engine: Local GraphRAG & Primary Source Ingestion
 
-We are replacing the flat `world_bible.json` with a **Dynamic Knowledge Graph** (NetworkX/Vector-backed) integrated via the `VertexAiRagMemoryService`.
+We are replacing the flat `world_bible.json` with a **Local Knowledge Graph** (GraphRAG) inspired by the `code-review-mcp` architecture. This system uses **NetworkX** for graph logic and **Postgres (pgvector)** + **Ollama** for local embeddings.
 
 ### Primary Source Ingestion (Bypassing Surface-Level AI)
 *   **The V1 Masterstroke:** V1 history shows a reliance on raw Light Novel manuscripts (Volumes 1-8). 
-*   **The V2 ETL Pipeline (`LoreIngestionNode`):** Upgraded to an asynchronous ETL worker. This node ingests massive, raw manuscript volumes (50k-90k words each), chunks them, and embeds them directly into the GraphRAG Vector DB via `VertexAiMemoryBankService`, ensuring the `LoreHunterNode` queries the actual books, not Wikipedia.
+*   **The V2 ETL Pipeline (`LoreIngestionNode`):** Upgraded to an asynchronous ETL worker. This node ingests raw manuscripts, chunks them, and generates embeddings locally using **Ollama** (e.g., `mxbai-embed-large`). These are stored in the local Postgres DB using **pgvector**.
 
-### Context Engineering via Subgraph Injection
-*   **The Radius Pattern:** Instead of injecting the whole Bible, the `MemoryService` performs a graph traversal from the scene's focus node.
-*   **Epistemic Filtering (Replacing `fk_detector.py`):** Graph edges contain "visibility" weights. The injection engine *physically cannot* pull lore nodes that are hidden from the current POV character, rendering "Soft Forbidden Knowledge" leaks impossible.
+### Graph-Based Context Engineering (The Code-Review Pattern)
+*   **The Radius Pattern:** Just as `code-review-mcp` traverses code dependencies, Fable 2.0 traverses narrative dependencies. The `MemoryService` performs a graph traversal from the scene's focus node.
+*   **Epistemic Filtering:** Graph edges contain "visibility" weights. The injection engine *physically cannot* pull lore nodes that are hidden from the current POV character, solving the Information Asymmetry problem.
 
 ---
 

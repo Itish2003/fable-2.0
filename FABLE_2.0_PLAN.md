@@ -113,18 +113,15 @@ ADK 2.0 exposes native `usage_metadata` within its `LlmResponse` events (via the
 
 ---
 
-## 6. Native ADK 2.0 Beta Superpowers
+## 4. Native ADK 2.0 Beta Superpowers
 
-Based on an audit of the `google.adk` source code, we are activating these beta features:
+Based on an audit of the `google.adk` source code, we are activating these "hidden" beta features:
 
-### A. Artifact Versioning (`google.adk.artifacts`)
-*   **Lore Volumes:** Every massive research pass is committed as a **Versioned Artifact** using the native `FileArtifactService`. This provides a perfect audit trail for narrative evolution, solving the issue of a single mutable JSON blob.
-
-### B. Automated Evaluation & Optimization (GEPA)
+### A. Automated Evaluation & Optimization (GEPA)
 *   **The Feature:** `google.adk.optimization.GEPARootAgentPromptOptimizer`.
 *   **The Implementation:** We will define an `EvalSet` of "Perfect Chapters" from V1. Fable 2.0 will use GEPA to automatically refine the `StorytellerNode` system instructions to match your preferred prose style, replacing monolithic V1 manual prompt engineering.
 
-### C. Native Tool Retries (`ReflectAndRetryToolPlugin`)
+### B. Native Tool Retries (`ReflectAndRetryToolPlugin`)
 *   **The Upgrade:** Replaces the manual "fix: enforce tool calls" logic in V1. If an agent fails a tool call, the framework automatically reflects on the error and retries the call *internally* before the graph continues.
 
 ---

@@ -66,14 +66,17 @@ Fable 2.0 moves from programmatic Python loops to a formal state machine using `
 
 ---
 
-## 2. The Lore Engine: GraphRAG & Epistemic Boundaries
+## 2. The Lore Engine: GraphRAG & Primary Source Ingestion
 
 We are replacing the flat `world_bible.json` with a **Dynamic Knowledge Graph** (NetworkX/Vector-backed) integrated via the `VertexAiRagMemoryService`.
+
+### Primary Source Ingestion (Bypassing Surface-Level AI)
+*   **The V1 Masterstroke:** Inspection of the legacy `source_text` PSQL database revealed that Fable does *not* rely on generic Google Searches or Wiki scrapes. It was seeded with **literal source material** (e.g., *Mahouka* Light Novel Volumes 1-8, comprising hundreds of thousands of words). Generic web-search agents return surface-level summaries; Fable requires the granular, exact prose of the original author.
+*   **The V2 ETL Pipeline (`LoreIngestionNode`):** The legacy PyPDF/Playwright logic is upgraded to an asynchronous ETL worker. This node ingests massive, raw manuscript volumes (50k-90k words each), chunks them, and embeds them directly into the GraphRAG Vector DB, ensuring the `LoreHunterNode` queries the *actual books*, not Wikipedia.
 
 ### Context Engineering via Subgraph Injection
 *   **The Radius Pattern:** Instead of injecting the whole Bible, the `MemoryService` performs a graph traversal from the scene's focus node (e.g., a character or location). 
 *   **Epistemic Filtering (Replacing `fk_detector.py`):** Graph edges contain "visibility" weights. The injection engine *physically cannot* pull lore nodes that are hidden from the current POV character, rendering "Soft Forbidden Knowledge" leaks impossible.
-*   **ETL Pipeline (Replacing `source_text.py`):** The legacy PyPDF/Playwright logic is upgraded to a `LoreIngestionNode` that asynchronously scrapes LN/Manga wikis directly into the GraphRAG.
 
 ---
 

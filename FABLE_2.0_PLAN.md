@@ -113,6 +113,24 @@ The `ArchivistNode` strictly mutates the Pydantic `AgentState` using these core 
 
 ---
 
+## 4. Native Telemetry & Context Optimization
+
+ADK 2.0 exposes native `usage_metadata` within its `LlmResponse` events (via the `UsageMetadataChunk` model). In V1, token usage was a black box leading to arbitrary truncation. In V2, we leverage this metadata programmatically.
+
+### A. Context Caching Analytics
+*   The `UsageMetadataChunk` tracks `prompt_tokens` vs `cached_prompt_tokens`. 
+*   **The Upgrade:** We will implement an ADK `LoggingPlugin` that tracks cache hit rates for the `StorytellerNode`. If the `cached_prompt_tokens` ratio drops below a threshold, it automatically triggers an `EventsCompactionConfig` cycle to prune the context window, dramatically lowering API costs.
+
+### B. Reasoning & Effort Tracking
+*   The metadata exposes `reasoning_tokens`. 
+*   **The Upgrade:** We can tie this directly to the "Power Debt" constraint. If the `StorytellerNode` consumes excessive `reasoning_tokens` to resolve a complex battle scene, the system naturally increments the character's strain level.
+
+### C. Error Observation
+*   The `LlmResponse` contains native `error_code`, `error_message`, and `interrupted` flags.
+*   **The Upgrade:** Rather than raw `try/except` blocks crashing the script, the `FableWorkflow` intercepts these explicit flags and routes them to a `RecoveryNode` that gracefully downgrades the prompt (e.g., bypassing GraphRAG to save tokens) before retrying.
+
+---
+
 ## 5. Core Philosophy & Engineering Principles
 
 Fable 2.0 is built on the engineering philosophy extracted from the **ADK 2.0 Beta (v2.0.0-beta.1)** commit history:

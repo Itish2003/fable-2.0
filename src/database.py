@@ -19,25 +19,14 @@ AsyncSessionLocal = async_sessionmaker(
 async def init_db():
     """
     Initializes the database schema.
-    Creates all tables defined in our models and ADK models.
+    Creates only the tables defined in our custom Lore models.
+    ADK 2.0's DatabaseSessionService automatically manages its own session tables.
     """
     from src.state.lore_models import Base as LoreBase
-    from google.adk.sessions.schemas.v1 import Base as AdkBase
-    from sqlalchemy import text
     
     async with engine.begin() as conn:
-        # Create Lore Engine Tables
+        # Create Lore Engine Tables (Nodes, Edges, Embeddings, SourceText)
         await conn.run_sync(LoreBase.metadata.create_all)
-        # Create ADK Session Management Tables
-        await conn.run_sync(AdkBase.metadata.create_all)
-        
-        # Manually insert the schema version into adk_internal_metadata
-        # ADK 2.0 Beta requires this record to exist if the table exists.
-        await conn.execute(text(
-            "INSERT INTO adk_internal_metadata (\"key\", value) "
-            "VALUES ('schema_version', '1') "
-            "ON CONFLICT (\"key\") DO NOTHING;"
-        ))
 
 
 

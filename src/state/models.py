@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, model_validator, ConfigDict
 from enum import Enum
-from google.adk.agents.base_agent import BaseAgentState
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -52,13 +51,19 @@ class PowerDebt(BaseModel):
 
 # ─── ROOT AgentState ──────────────────────────────────────────────────────────
 
-class FableAgentState(BaseAgentState):
+class FableAgentState(BaseModel):
     """
     Primary ADK 2.0 Agent State for Fable.
     This model contains only the 'Hot State' - variables that change turn-by-turn.
     Deep lore and static descriptions live in the GraphRAG Memory Service.
     """
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    # Core Setup Configuration (Populated by WorldBuilder)
+    story_premise: str = Field(default="", description="The core premise and character framework provided by the user.")
+    power_level: str = Field(default="city", description="The scale of the protagonist's power (e.g., street, city, continental).")
+    story_tone: str = Field(default="balanced", description="The overarching tone of the narrative (e.g., dark, balanced, heroic).")
+    isolate_powerset: bool = Field(default=True, description="Whether the protagonist's power system is isolated from the rest of the universe's magic.")
 
     # Narrative Markers
     current_timeline_date: str = Field(default="Unknown", description="The current date and time in-world.")

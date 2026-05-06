@@ -2,10 +2,10 @@ from typing import Any, AsyncGenerator
 from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events.request_input import RequestInput
-from google.adk.events.event import Event
-from google.adk.platform import uuid
-
+import json
 import logging
+
+from src.state.models import FableAgentState
 
 logger = logging.getLogger("fable.worldbuilder")
 
@@ -16,54 +16,75 @@ async def run_world_builder(
 ) -> AsyncGenerator[Any, None]:
     """
     Interactive Node for setting up a new story.
-    Uses RequestInput to pause the workflow and ask the user for setup parameters.
+    Re-engineers the V1 FableWeaver setup flow to use ADK 2.0 RequestInput mechanics.
     """
     state_key = "world_builder_state"
-    builder_state = ctx.state.get(state_key, {"step": "genre"})
+    builder_state = ctx.state.get(state_key, {"step": "lore_dump"})
     
-    # Check if we are resuming from a previous RequestInput
-    interrupt_id = f"setup_{builder_state['step']}"
-    resume_payload = ctx.resume_inputs.get(interrupt_id)
-    
-    if builder_state["step"] == "genre":
-        if not resume_payload:
-            # We haven't asked the user yet. Yield RequestInput and suspend.
-            yield RequestInput(
-                interrupt_id=interrupt_id,
-                message="Welcome to Fable 2.0. What genre or existing universe would you like to explore?",
-            )
-            return
-        else:
-            # We received the answer
-            logger.info(f"User selected universe: {resume_payload}")
-            ctx.state["target_universe"] = resume_payload
-            builder_state["step"] = "protagonist"
-            ctx.state[state_key] = builder_state
-            
-    if builder_state["step"] == "protagonist":
-        interrupt_id = f"setup_{builder_state['step']}"
+    if builder_state["step"] == "lore_dump":
+        interrupt_id = "setup_lore_dump"
         resume_payload = ctx.resume_inputs.get(interrupt_id)
         
         if not resume_payload:
             yield RequestInput(
                 interrupt_id=interrupt_id,
-                message="Excellent. Please describe your protagonist's core ability or anomaly.",
+                message="Paste detailed character framework, story premise, power system details, or any structured data here.",
             )
             return
         else:
-            logger.info(f"User protagonist defined: {resume_payload}")
-            ctx.state["protagonist_ability"] = resume_payload
+            logger.info("Received lore dump payload from frontend.")
+            # ADK wraps the payload in a dictionary: {'payload': '...'}
+            lore_string = resume_payload.get("payload", "") if isinstance(resume_payload, dict) else resume_payload
+            ctx.state["story_premise"] = lore_string
+            builder_state["step"] = "configuration"
+            ctx.state[state_key] = builder_state
+            
+    if builder_state["step"] == "configuration":
+        interrupt_id = "setup_configuration"
+        resume_payload = ctx.resume_inputs.get(interrupt_id)
+        
+        if not resume_payload:
+            # We request a structured JSON response from the frontend
+            yield RequestInput(
+                interrupt_id=interrupt_id,
+                message="Please configure the simulation parameters (Power Level, Tone, Isolation Rules).",
+            )
+            return
+        else:
+            logger.info(f"Received configuration payload: {resume_payload}")
+            try:
+                # The frontend will send a JSON string for the configuration step
+                config_string = resume_payload.get("payload", "") if isinstance(resume_payload, dict) else resume_payload
+                config = json.loads(config_string)
+            except Exception:
+                config = {"power_level": "city", "story_tone": "balanced", "isolate_powerset": True}
+                
+            ctx.state["config"] = config
             builder_state["step"] = "complete"
             ctx.state[state_key] = builder_state
             
     if builder_state["step"] == "complete":
-        # The setup is done. We can now initialize the FableAgentState and 
-        # yield a signal that routes the graph to the main narrative engine.
         logger.info("World Building Complete. Initializing State...")
         
-        # We return a specific routing dictionary that the Graph edges can follow
+        # Inject the state directly into the global session state dictionary.
+        # This persists properly to Postgres and triggers state_delta events.
+        ctx.state["story_premise"] = ctx.state.get("story_premise", "")
+        config = ctx.state.get("config", {})
+        ctx.state["power_level"] = config.get("power_level", "city")
+        ctx.state["story_tone"] = config.get("story_tone", "balanced")
+        ctx.state["isolate_powerset"] = config.get("isolate_powerset", True)
+        
+        ctx.state["current_timeline_date"] = "Prologue"
+        ctx.state["current_mood"] = "Neutral"
+        ctx.state["chapter_count"] = 1
+        
+        # Initialize required nested dictionaries for Pydantic validation
+        ctx.state["power_debt"] = {"strain_level": 0, "recent_feats": []}
+        ctx.state["active_characters"] = {}
+        ctx.state["active_divergences"] = []
+        ctx.state["forbidden_concepts"] = []
+        ctx.state["anti_worf_rules"] = {}
+        
         yield {
-            "setup_status": "complete",
-            "universe": ctx.state.get("target_universe"),
-            "protagonist": ctx.state.get("protagonist_ability")
+            "setup_status": "complete"
         }

@@ -42,8 +42,33 @@ Unlike V1's dynamic `while` loops, Fable 2.0 routes control flow through a stric
 
 3. **Start the Local Engine:**
    ```bash
-   uvicorn src.main:app --reload
+   uvicorn src.main:app --host 127.0.0.1 --port 8001 --reload
    ```
+
+## Running the System
+
+To fully experience the narrative simulation, you must start both the ADK 2.0 Engine and the React UI.
+
+### 1. Start the Backend (ADK 2.0 Engine)
+The backend is a FastAPI application that drives the ADK state machine.
+*   **Location:** Project Root (`/Users/itish/Downloads/fable2.0`)
+*   **Port:** 8001
+*   **Command:**
+    ```bash
+    PYTHONPATH=. .venv/bin/uvicorn src.main:app --host 127.0.0.1 --port 8001 --reload
+    ```
+
+### 2. Start the Frontend (React UI)
+The frontend is a Vite-based React app that connects to the engine via WebSockets.
+*   **Location:** `/Users/itish/Downloads/fable2.0/frontend`
+*   **Port:** 5174 (default Vite port)
+*   **Command:**
+    ```bash
+    cd frontend
+    npm run dev
+    ```
+
+Once both are running, open your browser to **http://localhost:5174**. The UI will automatically create a session and trigger the initial **World Builder** setup wizard.
 
 ## Development Phases
 This project was strictly implemented across 7 phases:

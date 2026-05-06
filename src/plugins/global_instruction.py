@@ -1,9 +1,12 @@
+import logging
 from typing import Optional, Any
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
 
 from src.state.models import FableAgentState
+
+logger = logging.getLogger("fable.plugin")
 
 class GlobalInstructionPlugin(BasePlugin):
     """
@@ -15,31 +18,40 @@ class GlobalInstructionPlugin(BasePlugin):
     def __init__(self):
         super().__init__(name="global_instruction_plugin")
     
-    async def run_before_agent_callback(
+    async def before_agent_callback(
         self,
         *,
         agent: Any, # BaseAgent
         callback_context: CallbackContext,
+        **kwargs
     ) -> Optional[types.Content]:
+        """
+        Overrides the BasePlugin callback.
+        Injects pacing and tone notes based on the protagonist's current power strain.
+        """
         
         # We only care about modifying the Storyteller's instructions
         if agent.name != "storyteller":
             return None
             
-        state: FableAgentState = callback_context.state.get_state(FableAgentState)
-        if not state:
+        # Fetch the state from the global session context
+        try:
+            state = FableAgentState(**{k: callback_context.state[k] for k in callback_context.state._value.keys() | callback_context.state._delta.keys()})
+        except Exception:
             return None
             
         dynamic_instructions = []
         
-        # 1. Evaluate Power Debt
-        if state.power_debt.strain_level > 80:
+        # 1. Evaluate Power Debt (Hot State)
+        power_strain = state.power_debt.strain_level if hasattr(state, "power_debt") else 0
+        
+        if power_strain > 80:
             dynamic_instructions.append(
                 "CRITICAL OVERRIDE: The protagonist is severely exhausted (Power Strain Critical). "
                 "Emphasize the physical toll of their actions. Limit complex magic or agile movements. "
                 "Their inner monologue should reflect fatigue and desperation."
             )
-        elif state.power_debt.strain_level > 50:
+        elif power_strain > 50:
             dynamic_instructions.append(
                 "TONE NOTE: The protagonist is feeling the strain of recent encounters. "
                 "They are breathing heavily and may hesitate before using demanding abilities."
@@ -52,20 +64,15 @@ class GlobalInstructionPlugin(BasePlugin):
                 "Focus on micro-expressions, ambient silence, and the feeling of impending conflict."
             )
             
-        # If we generated dynamic instructions, we need to inject them into the system instruction
-        # Note: In a full ADK 2.0 app, we would ideally modify the SystemInstruction on the fly, 
-        # or append a hidden 'SystemMessage' to the context. For this plugin, we can 
-        # inject it as an invisible prepended message if the framework allows, or 
-        # we configure the Storyteller to read a specific state variable.
-        
-        # For validation purposes, we'll store it back in the state so the Storyteller can read it,
-        # or we could return a hidden content part if ADK supports it.
-        
         if dynamic_instructions:
-            # We join them and pass them along. In a full implementation, you'd merge this with the agent's config.
-            compiled_instruction = "\n\n".join(dynamic_instructions)
-            # Log it so we can verify it ran
-            import logging
-            logging.getLogger("fable.plugin").info(f"Injected dynamic instructions: {compiled_instruction}")
+            compiled_notes = "\n\n".join(dynamic_instructions)
+            logger.info(f"Injecting dynamic tone instructions (Strain: {power_strain})")
             
-        return None # We return None because we don't want to skip the agent's run
+            # In ADK 2.0 Beta, returning Content from before_agent_callback 
+            # effectively prepends a system-style user message to the context.
+            return types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=f"[INTERNAL NARRATIVE NOTE: {compiled_notes}]")]
+            )
+            
+        return None

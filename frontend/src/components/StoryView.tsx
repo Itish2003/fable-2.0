@@ -1,10 +1,32 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Activity, Database, ServerCrash, Cpu } from 'lucide-react';
-import { useStory } from '../hooks/useStory';
 
-export default function StoryView() {
-  const { isConnected, isTyping, prose, pendingInput, loreUpdates, sendChoice, submitInput } = useStory();
+export type RequestInputData = {
+  interrupt_id: string;
+  message: string;
+};
+
+export type LoreStatus = {
+  id: number;
+  message: string;
+  timestamp: string;
+};
+
+interface StoryViewProps {
+  story: {
+    isConnected: boolean;
+    isTyping: boolean;
+    prose: string;
+    pendingInput: RequestInputData | null;
+    loreUpdates: LoreStatus[];
+    sendChoice: (msg: string) => void;
+    submitInput: (txt: string) => void;
+  }
+}
+
+export default function StoryView({ story }: StoryViewProps) {
+  const { isConnected, isTyping, prose, pendingInput, loreUpdates, sendChoice, submitInput } = story;
   const [inputText, setInputText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 

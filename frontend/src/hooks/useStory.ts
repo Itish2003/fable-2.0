@@ -22,6 +22,7 @@ export function useStory() {
   const [prose, setProse] = useState<string>('');
   const [pendingInput, setPendingInput] = useState<RequestInputData | null>(null);
   const [loreUpdates, setLoreUpdates] = useState<LoreStatus[]>([]);
+  const [setupComplete, setSetupComplete] = useState(false);
   
   const wsRef = useRef<WebSocket | null>(null);
   const loreIdRef = useRef(0);
@@ -77,11 +78,16 @@ export function useStory() {
             break;
             
           case 'status':
-            loreIdRef.current += 1;
-            setLoreUpdates(prev => [
-              { id: loreIdRef.current, message: data.message, timestamp: new Date().toLocaleTimeString() },
-              ...prev
-            ]);
+            // We overloaded 'status' in runner.py to send the setup complete event too
+            if (data.message === 'setup_complete') {
+                setSetupComplete(true);
+            } else {
+                loreIdRef.current += 1;
+                setLoreUpdates(prev => [
+                { id: loreIdRef.current, message: data.message, timestamp: new Date().toLocaleTimeString() },
+                ...prev
+                ]);
+            }
             break;
             
           case 'turn_complete':
@@ -139,6 +145,7 @@ export function useStory() {
     prose,
     pendingInput,
     loreUpdates,
+    setupComplete,
     sendChoice,
     submitInput
   };

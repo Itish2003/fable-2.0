@@ -7,6 +7,11 @@ from google.genai import types
 from src.app_container import fable_runner
 from src.ws.manager import manager
 from google.adk.platform import uuid as adk_uuid
+from google.adk.workflow.utils._workflow_hitl_utils import (
+    create_request_input_response,
+    has_request_input_function_call,
+    get_request_input_interrupt_ids
+)
 
 logger = logging.getLogger("fable.runner_loop")
 
@@ -25,56 +30,55 @@ async def execute_adk_turn(
     run_kwargs = {
         "user_id": user_id,
         "session_id": session_id,
-        # Generating a unique invocation ID per turn is good practice
         "invocation_id": adk_uuid.new_uuid(),
     }
     
     logger.info(f"Executing turn for App: {fable_runner.app_name}, Session: {session_id}, User: {user_id}")
     
     # 1. Prepare Input
-    if message_text:
-        # Standard input message (starts the graph or continues conversation)
+    if message_text and message_text != "/start":
         run_kwargs["new_message"] = types.Content(
             role="user", 
             parts=[types.Part.from_text(text=message_text)]
         )
+    elif message_text == "/start":
+        run_kwargs["new_message"] = types.Content(
+            role="user", 
+            parts=[types.Part.from_text(text="[System: Begin Simulation]")]
+        )
     elif resume_payload and interrupt_id:
-        # Resuming from a WorldBuilder RequestInput suspension
-        # The ADK uses the invocation_context state to pass resume inputs. 
-        # But for runner.run_async we can also trigger resumes by ensuring the payload matches.
-        # ADK 2.0 uses 'state_delta' or internal event queues to resume RequestInputs. 
-        # To handle RequestInput replies at the Runner level, we must provide it via `new_message`
-        # mapped to the specific interruption, or use the runner's built-in resume features if available.
-        # Actually, in ADK 2.0 Beta, we just pass the new_message and the runner matches it to the pending interrupt.
-        # Alternatively, we can pass it via `state_delta` if the node looks for it in `ctx.resume_inputs`.
-        # For our WorldBuilder, we fetch it via `ctx.resume_inputs.get(interrupt_id)`.
-        
-        # We will wrap it in a special message that ADK 2.0's HitlUtils maps, or inject to state delta.
-        # For simplicity and adhering to ADK Beta mechanics, let's inject it into `state_delta` for now,
-        # since our WorldBuilder manually checks `ctx.resume_inputs`.
-        run_kwargs["state_delta"] = {
-            f"_resume_{interrupt_id}": resume_payload  # Depending on exact ADK HITL implementation.
-        }
-        # In an actual pure ADK App, we would use Hitl utils, but we'll adapt to how our node works.
-        pass
+        run_kwargs["new_message"] = types.Content(
+            role="user",
+            parts=[create_request_input_response(
+                interrupt_id=interrupt_id,
+                response={"payload": resume_payload}
+            )]
+        )
         
     try:
-        # 2. Start the Async Generator Loop
-        # Note: We must wrap the run_async call to cleanly catch standard exceptions
         generator = fable_runner.run_async(**run_kwargs)
         
         async for event in generator:
             
-            # 3. Handle RequestInput (Suspension)
-            if isinstance(event, RequestInput):
-                logger.info(f"Graph Suspended by RequestInput: {event.interrupt_id}")
+            # 3. Handle RequestInput (Suspension) natively via ADK utils
+            if has_request_input_function_call(event):
+                interrupt_ids = get_request_input_interrupt_ids(event)
+                req_interrupt_id = interrupt_ids[0] if interrupt_ids else "unknown"
+                
+                # Extract the prompt message from the function call arguments
+                req_message = "Please provide input."
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.function_call and part.function_call.id == req_interrupt_id:
+                            req_message = part.function_call.args.get("message", req_message)
+                            break
+                            
+                logger.info(f"Graph Suspended by RequestInput: {req_interrupt_id}")
                 await manager.send_personal_message({
                     "type": "request_input",
-                    "interrupt_id": event.interrupt_id,
-                    "message": event.message,
-                    "response_schema": str(event.response_schema) if event.response_schema else None
+                    "interrupt_id": req_interrupt_id,
+                    "message": req_message,
                 }, session_id)
-                # Break the loop because the graph yields here until resumed
                 break
                 
             # 4. Handle Standard Events (Node Output)
@@ -112,6 +116,13 @@ async def execute_adk_turn(
                             "type": "status",
                             "message": f"Writing to Lore Bible: {name}..."
                         }, session_id)
+            
+            # Catch WorldBuilder dictionary yield
+            if isinstance(event, dict) and event.get("setup_status") == "complete":
+                await manager.send_personal_message({
+                    "type": "status",
+                    "message": "setup_complete"
+                }, session_id)
                     
         # When generator is exhausted
         await manager.send_personal_message({

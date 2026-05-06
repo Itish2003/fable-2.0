@@ -29,7 +29,4 @@ def create_storyteller_node() -> LlmAgent:
     # Initialize the LLM Agent
     storyteller_agent = LlmAgent.from_config(agent_config, config_abs_path="")
     
-    # Attach our custom tone modulation plugin
-    storyteller_agent.before_agent_callback = [GlobalInstructionPlugin().run_before_agent_callback]
-    
     return storyteller_agent

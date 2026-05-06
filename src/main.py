@@ -61,8 +61,11 @@ async def story_websocket(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
     try:
         # Upon initial connection, trigger the WorldBuilder setup node
-        # We send an initial empty message to start the graph traversal
-        asyncio.create_task(execute_adk_turn(session_id=session_id))
+        # ADK 2.0 Beta requires a new_message to start a root node traversal on a fresh session
+        asyncio.create_task(execute_adk_turn(
+            session_id=session_id,
+            message_text="/start"
+        ))
         
         while True:
             # Wait for client messages

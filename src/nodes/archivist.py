@@ -36,7 +36,7 @@ def create_archivist_node() -> LlmAgent:
     
     # Initialize the LLM Agent
     archivist_agent = LlmAgent.from_config(agent_config, config_abs_path="")
-    archivist_agent._tools = ARCHIVIST_TOOLS 
+    archivist_agent.tools = ARCHIVIST_TOOLS 
     archivist_agent.planner = planner
     
     return archivist_agent

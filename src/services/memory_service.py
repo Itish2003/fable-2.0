@@ -77,52 +77,37 @@ class FableLocalMemoryService(BaseMemoryService):
         return allowed_node_ids
 
     async def search_memory(
-        self, *, app_name: str, user_id: str, query: str, custom_metadata: Mapping[str, object] = None
+        self, *, app_name: str, user_id: str, query: str
     ) -> SearchMemoryResponse:
         """
-        Performs a hybrid search:
-        1. Identifies the POV character and focus node from metadata.
-        2. Gets the allowed node IDs via Epistemic Filtering.
-        3. Generates the query embedding via Ollama.
-        4. Queries pgvector using Cosine Distance (<=>), filtering by allowed nodes.
+        Performs a hybrid search.
+        Note: Signature must match ADK 2.0 BaseMemoryService exactly.
         """
         response = SearchMemoryResponse(memories=[])
-        metadata = custom_metadata or {}
         
-        pov_character = metadata.get("pov_character", "unknown")
-        focus_node = metadata.get("focus_node", query) # Fallback to query if no explicit focus
+        # In ADK 2.0 Beta, passing metadata to search_memory is restricted.
+        # We assume the 'POV' is handled by the higher-level agent prompt,
+        # but for Epistemic Filtering, we can attempt a global search 
+        # or parse the query for character names.
         
-        # 1. Epistemic Filter
-        allowed_ids = await self._epistemic_graph_filter(pov_character, focus_node)
+        pov_character = "unknown"
+        focus_node = query
         
-        # If the focus node doesn't exist, we fallback to a global search,
-        # but in a strict Epistemic system, you might want to return empty.
-        
-        # 2. Get Vector
+        # 1. Get Vector
         try:
             query_vector = await get_embedding(query)
         except Exception as e:
             logger.error(f"Ollama embedding failed: {e}")
             return response
             
-        # 3. Search pgvector
+        # 2. Search pgvector (Global fallback since metadata is restricted in this Beta signature)
         async with AsyncSessionLocal() as session:
-            # We use the <=> operator for cosine distance in pgvector
-            # We filter by node_id in allowed_ids (or global context where node_id IS NULL)
-            
-            # SQL: SELECT chunk_text FROM lore_embeddings 
-            # WHERE node_id IN (allowed_ids) OR node_id IS NULL 
-            # ORDER BY embedding <=> query_vector LIMIT 5
-            
             stmt = select(LoreEmbedding)
             
-            if allowed_ids:
-                stmt = stmt.where(
-                    (LoreEmbedding.node_id.in_(allowed_ids)) | (LoreEmbedding.node_id.is_(None))
-                )
-                
-            # Order by cosine distance (requires the pgvector extension and operator)
-            # SQLAlchemy 2.0 + pgvector support:
+            # For now, we perform a global canon search. 
+            # Epistemic filtering will be restored when ADK adds metadata passing 
+            # to the search_memory interface.
+            
             stmt = stmt.order_by(LoreEmbedding.embedding.cosine_distance(query_vector)).limit(5)
             
             result = await session.execute(stmt)

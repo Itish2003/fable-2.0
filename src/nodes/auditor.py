@@ -1,8 +1,9 @@
 import logging
-from typing import Any
+from typing import Any, AsyncGenerator
 from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events.event import Event
+from google.adk.events.event_actions import EventActions
 
 from src.state.models import FableAgentState
 
@@ -12,15 +13,16 @@ logger = logging.getLogger("fable.auditor")
 async def run_auditor(
     ctx: Context,
     node_input: Any,
-) -> str:
+) -> AsyncGenerator[Event, None]:
     """
     Evaluates Epistemic Boundaries and Anti-Worf rules.
     If the Storyteller's output violates core constraints, this node
-    injects a RetryException payload and the graph routes backward.
+    emits a 'failed' route and the graph routes backward.
     """
-    state: FableAgentState = ctx.get_invocation_context().agent_states.get("auditor")
+    # Fetch state from global session context
+    state = FableAgentState(**{k: ctx.state[k] for k in ctx.state._value.keys() | ctx.state._delta.keys()})
     if not state:
-        state = FableAgentState() # Fallback for testing
+        state = FableAgentState() # Fallback
         
     story_text = ""
     if isinstance(node_input, Event) and node_input.content:
@@ -37,7 +39,8 @@ async def run_auditor(
     for concept in state.forbidden_concepts:
         if concept.lower() in story_lower:
             logger.warning(f"AUDIT FAILED: Epistemic leak detected. Used forbidden concept: {concept}")
-            return "failed"
+            yield Event(actions=EventActions(route="failed"))
+            return
 
     # 2. Anti-Worf Check (Dynamic)
     defeat_keywords = ["defeated", "beaten", "lost easily", "overpowered by"]
@@ -46,7 +49,9 @@ async def run_auditor(
             for keyword in defeat_keywords:
                 if keyword in story_lower:
                     logger.warning(f"AUDIT FAILED: Anti-Worf constraint broken for {char_name}. Rule: {rule}")
-                    return "failed"
+                    yield Event(actions=EventActions(route="failed"))
+                    return
         
     logger.info("AUDIT PASSED: Text is canon-compliant.")
-    return "passed"
+    # Explicitly yield the 'passed' route so the Workflow Graph can follow the edge
+    yield Event(actions=EventActions(route="passed"))

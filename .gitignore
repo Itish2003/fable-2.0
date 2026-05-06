@@ -46,3 +46,13 @@ adk-2.0-map.html
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+

@@ -138,3 +138,6 @@ class FableLocalMemoryService(BaseMemoryService):
                 )
                 
         return response
+
+# Instantiate singleton for ADK 2.0 App injection
+memory_service = FableLocalMemoryService()

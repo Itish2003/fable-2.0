@@ -8,7 +8,7 @@ load_dotenv()
 
 # We leverage the DATABASE_URL from our .env
 # ADK 2.0 DatabaseSessionService handles its own SQLAlchemy engine initialization
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://itish@localhost/fable")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://itish@localhost/fable2_0")
 
 # 1. Initialize the ADK Session Service
 # This service handles native ADK 2.0 session persistence, checkpoints, and event history.
@@ -22,7 +22,7 @@ async def create_fable_session(user_id: str, parent_session_id: str = None) -> s
     """
     session_id = adk_uuid.new_uuid()
     await session_service.create_session(
-        app_name="fable-2.0",
+        app_name="fable_2_0",
         user_id=user_id,
         session_id=session_id
     )

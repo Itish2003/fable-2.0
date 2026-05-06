@@ -1,9 +1,12 @@
 from google.adk.workflow import Workflow
 from google.adk.workflow.utils._workflow_graph_utils import build_node
+from google.adk.workflow._function_node import FunctionNode
 
 from src.nodes.storyteller import create_storyteller_node
 from src.nodes.archivist import create_archivist_node
 from src.nodes.auditor import run_auditor
+from src.nodes.world_builder import run_world_builder
+from src.nodes.recovery import run_recovery
 
 def build_fable_workflow() -> Workflow:
     """
@@ -21,14 +24,20 @@ def build_fable_workflow() -> Workflow:
     # The auditor is a @node decorated function, so it's already a BaseNode instance
     auditor_node = run_auditor
     
+    # The world_builder is also a @node decorated function
+    world_builder_node = run_world_builder
+    
+    # Create the recovery node manually as an example
+    recovery_node = FunctionNode(func=run_recovery, name="recovery")
+    
     # 2. Define the Graph Edges (State Machine Logic)
-    # ADK 2.0 supports tuple-based chains or RoutingMaps.
-    # The first element in the list is automatically considered the entry point
-    # if it's connected to 'START' via tuple, or we can just specify the chain.
     
     edges = [
-        # Chain from START to storyteller
-        ("START", storyteller_node),
+        # Chain from START to world_builder for setup
+        ("START", world_builder_node),
+        
+        # After setup, go to storyteller
+        (world_builder_node, storyteller_node),
         
         # Chain from storyteller to auditor
         (storyteller_node, auditor_node),
@@ -44,9 +53,11 @@ def build_fable_workflow() -> Workflow:
     fable_graph = Workflow(
         name="fable_main_workflow",
         sub_nodes=[
+            world_builder_node,
             storyteller_node,
             auditor_node,
-            archivist_node
+            archivist_node,
+            recovery_node
         ],
         edges=edges
     )

@@ -12,7 +12,7 @@ logger = logging.getLogger("fable.runner_loop")
 
 async def execute_adk_turn(
     session_id: str, 
-    user_id: str = "default_user",
+    user_id: str = "local_tester",
     message_text: Optional[str] = None,
     resume_payload: Optional[Any] = None,
     interrupt_id: Optional[str] = None
@@ -28,6 +28,8 @@ async def execute_adk_turn(
         # Generating a unique invocation ID per turn is good practice
         "invocation_id": adk_uuid.new_uuid(),
     }
+    
+    logger.info(f"Executing turn for App: {fable_runner.app_name}, Session: {session_id}, User: {user_id}")
     
     # 1. Prepare Input
     if message_text:
@@ -92,12 +94,24 @@ async def execute_adk_turn(
                     pass
             
             # 5. Handle Tool Calls
-            if hasattr(event, "actions") and event.actions and event.actions.tool_calls:
-                for tool_call in event.actions.tool_calls:
-                    await manager.send_personal_message({
-                        "type": "status",
-                        "message": f"Writing to Lore Bible: {tool_call.name}..."
-                    }, session_id)
+            # ADK Beta actions can be dicts or objects, so we safely check
+            actions = getattr(event, "actions", None)
+            if actions:
+                tool_calls = getattr(actions, "tool_calls", None)
+                if not tool_calls and isinstance(actions, dict):
+                    tool_calls = actions.get("tool_calls", None)
+                    
+                if tool_calls:
+                    # tool_calls can be a list of dicts or objects
+                    for tool_call in tool_calls:
+                        name = getattr(tool_call, "name", None)
+                        if not name and isinstance(tool_call, dict):
+                            name = tool_call.get("name", "tool")
+                            
+                        await manager.send_personal_message({
+                            "type": "status",
+                            "message": f"Writing to Lore Bible: {name}..."
+                        }, session_id)
                     
         # When generator is exhausted
         await manager.send_personal_message({

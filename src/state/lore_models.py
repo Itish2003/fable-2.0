@@ -48,3 +48,13 @@ class LoreEmbedding(Base):
     embedding = Column(Vector(768), nullable=False) 
 
     node = relationship("LoreNode", back_populates="embeddings")
+
+class SourceText(Base):
+    __tablename__ = 'source_text'
+
+    id = Column(Integer, primary_key=True, index=True)
+    universe = Column(String, index=True)
+    volume = Column(String, index=True)
+    content = Column(Text, nullable=False)
+    word_count = Column(Integer, default=0)
+

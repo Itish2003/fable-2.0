@@ -39,17 +39,19 @@ app.add_middleware(
 )
 
 class CreateStoryRequest(BaseModel):
-    user_id: str = "default_user"
+    user_id: str = "local_tester" # Match frontend string
 
 @app.post("/stories")
 async def create_story(req: CreateStoryRequest):
     """
-    Creates a new narrative session.
+    Creates a new narrative session in the ADK Database.
     Returns the session_id to connect via WebSocket.
     """
-    session_id = str(uuid.uuid4())
-    logger.info(f"New story session created: {session_id}")
+    from src.services.session_manager import create_fable_session
+    session_id = await create_fable_session(user_id=req.user_id)
+    logger.info(f"New story session initialized in ADK: {session_id} for user {req.user_id}")
     return {"session_id": session_id}
+
 
 @app.websocket("/ws/story/{session_id}")
 async def story_websocket(websocket: WebSocket, session_id: str):

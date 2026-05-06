@@ -44,6 +44,6 @@ Defined in `src/graph/workflow.py`.
     *   Use `_workflow_hitl_utils.py` to trigger suspensions when the Auditor detects a critical canon break requiring user authorization.
 
 ## 5. Validation Criteria
-*   [ ] A standard user input successfully flows through Storyteller -> ChoiceGenerator -> Auditor -> Archivist.
-*   [ ] A detected Anti-Worf violation forces the graph to route backward, regenerating the Storyteller's output without crashing.
-*   [ ] Parallel `LoreHunter` nodes successfully block the graph at the `JoinNode` until all complete.
+*   [x] A standard user input successfully flows through Storyteller -> ChoiceGenerator -> Auditor -> Archivist.
+*   [x] A detected Anti-Worf violation forces the graph to route backward, regenerating the Storyteller's output without crashing.
+*   [x] Parallel `LoreHunter` nodes successfully block the graph at the `JoinNode` until all complete.

@@ -44,6 +44,6 @@ When the `StorytellerNode` needs context:
     *   Build a service to sync the Postgres Lore tables into an in-memory NetworkX graph for fast traversal.
 
 ## 5. Validation Criteria
-*   [ ] Ollama successfully generates embeddings for a sample paragraph locally.
-*   [ ] Postgres successfully stores and retrieves vectors using `pgvector`.
-*   [ ] A query for "First High" correctly pulls only the visible characters and locations connected in the graph.
+*   [x] Ollama successfully generates embeddings for a sample paragraph locally.
+*   [x] Postgres successfully stores and retrieves vectors using `pgvector`.
+*   [x] A query for "First High" correctly pulls only the visible characters and locations connected in the graph.

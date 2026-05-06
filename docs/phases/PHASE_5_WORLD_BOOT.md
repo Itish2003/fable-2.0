@@ -28,6 +28,6 @@ Replace the V1 REST API setup wizard (`/clarify`, `/refine`) with a native ADK 2
     *   Trigger the `FableWorkflow` (Phase 4) with the newly populated state, seamlessly transitioning the user from "Setup Mode" to "Story Mode".
 
 ## 5. Validation Criteria
-*   [ ] The `WorldBuilderNode` successfully emits `RequestInput` events and suspends.
-*   [ ] User replies correctly resume the node's execution context.
-*   [ ] Completing the wizard successfully populates the `FableAgentState` and triggers the first node of the main `FableWorkflow`.
+*   [x] The `WorldBuilderNode` successfully emits `RequestInput` events and suspends.
+*   [x] User replies correctly resume the node's execution context.
+*   [x] Completing the wizard successfully populates the `FableAgentState` and triggers the first node of the main `FableWorkflow`.

@@ -45,6 +45,6 @@ Created in `src/tools/archivist_tools.py`. These tools natively mutate `FableAge
     *   Create an `EvalSet` of 5 high-quality V1 chapters and run the `GEPARootAgentPromptOptimizer` to refine the Storyteller's base prompt.
 
 ## 5. Validation Criteria
-*   [ ] `ArchivistNode` successfully parses a prose chapter and invokes `record_divergence` with valid JSON.
-*   [ ] High `power_debt` state successfully alters the generated prose of the `StorytellerNode`.
-*   [ ] Failed tool calls automatically trigger internal retries without crashing the node execution.
+*   [x] `ArchivistNode` successfully parses a prose chapter and invokes `record_divergence` with valid JSON.
+*   [x] High `power_debt` state successfully alters the generated prose of the `StorytellerNode`.
+*   [x] Failed tool calls automatically trigger internal retries without crashing the node execution.

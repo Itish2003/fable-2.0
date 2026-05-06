@@ -42,6 +42,6 @@ class FableAgentState(BaseAgentState):
     *   Wrap `DatabaseSessionService` to handle Fable-specific branching (e.g., creating a branch directly from event `$N`).
 
 ## 5. Validation Criteria
-*   [ ] Pydantic models validate successfully without throwing `ValidationError`.
-*   [ ] Starting a new session successfully commits the default `FableAgentState` to Postgres.
-*   [ ] Branching a session successfully carries over the `AgentState` from the parent checkpoint.
+*   [x] Pydantic models validate successfully without throwing `ValidationError`.
+*   [x] Starting a new session successfully commits the default `FableAgentState` to Postgres.
+*   [x] Branching a session successfully carries over the `AgentState` from the parent checkpoint.

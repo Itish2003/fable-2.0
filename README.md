@@ -4,7 +4,7 @@ Fable 2.0 is a deterministic, graph-based narrative simulation engine built on t
 
 ## Core Architecture
 
-The backend architecture consists of several decoupled layers, allowing for precise control over narrative generation and state integrity.
+The backend architecture consists of several decoupled layers, allowing for precise control over narrative generation and state integrity. (See [PROMPTING_STRATEGY.md](docs/PROMPTING_STRATEGY.md) for a deep dive into the dynamic LLM orchestration model).
 
 ### 1. The Workflow Graph
 Unlike V1's dynamic `while` loops, Fable 2.0 routes control flow through a strict, deterministic Directed Acyclic Graph (DAG) built with `google.adk.workflow.Workflow`.

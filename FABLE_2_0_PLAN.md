@@ -162,11 +162,14 @@ Fable 2.0 is built on the engineering philosophy extracted from the **ADK 2.0 Be
 7.  **Phase 7: Productionization & Advanced Telemetry** (DONE)
 8.  **Phase 8: Advanced Dynamic Initialization & Research Swarm** (DONE)
 9.  **Phase 9: Narrative Intelligence & Long-Term Continuity** (DONE)
-10. **Phase 10: Narrative Guardrails & Context Sanitization** (PENDING)
-    *   Implement Context Anti-Leakage Regex Scrubber (`src/utils/sanitizer.py`).
-    *   Implement Dynamic Power Scale Enforcement (Anti-Nerf) via ADK AgentPlugin.
-    *   Implement Programmatic Fallback Extraction Node to catch LLM tool failures.
-    *   Implement 'Enrich' Auto-Analyzer to prevent World Bible decay.
+10. **Phase 10: Narrative Guardrails & Context Sanitization** (DONE)
+11. **Phase 11: The Rewrite Feature** (DONE)
+    *   Expose native `rewind_async` functionality to the UI.
+    *   Inject [SYSTEM REWRITE CONSTRAINT] via `new_message` to steer Storyteller.
+12. **Phase 12: Enhanced Suspicion Engine** (PENDING)
+    *   Implement semantic "Secret Proximity" detection using local embeddings.
+    *   Implement "Suspicion Protocol" callback to force Awareness-Spectrum choices.
+    *   Update `ChoiceGenerator` to support tiered narrative branching.
 
 ---
 

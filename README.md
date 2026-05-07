@@ -1,83 +1,77 @@
-# Fable 2.0 Engine
+<div align="center">
+  <h1>🌌 Fable 2.0 Engine</h1>
+  <p><strong>A deterministic, event-sourced, simulation-grade interactive fiction engine.</strong></p>
+</div>
 
-Fable 2.0 is a deterministic, graph-based narrative simulation engine built on the **Google ADK 2.0 Beta**. It acts as a highly constrained AI Dungeon Master, utilizing an uncompromising LLM tool-calling loop, a local GraphRAG memory system, and an interactive state machine to simulate living narrative worlds.
+---
 
-## Core Architecture
+Fable 2.0 is a complete architectural paradigm shift from traditional "prompt-chained" AI Dungeon Masters. Built entirely on the **Google ADK 2.0 Beta** framework, it abandons fragile `while` loops and monolithic prompts in favor of a strictly typed Directed Acyclic Graph (DAG), native map-reduce research swarms, and an event-sourced timeline.
 
-The backend architecture consists of several decoupled layers, allowing for precise control over narrative generation and state integrity. (See [PROMPTING_STRATEGY.md](docs/PROMPTING_STRATEGY.md) for a deep dive into the dynamic LLM orchestration model).
+It acts as an uncompromising AI Game Master, utilizing a multi-agent tool-calling loop, a local GraphRAG memory system, and an interactive state machine to simulate living narrative worlds.
 
-### 1. The Workflow Graph
-Unlike V1's dynamic `while` loops, Fable 2.0 routes control flow through a strict, deterministic Directed Acyclic Graph (DAG) built with `google.adk.workflow.Workflow`.
-*   **WorldBuilderNode**: Uses ADK's `RequestInput` to execute a multi-turn, Human-in-the-Loop (HITL) setup wizard to bootstrap the universe and protagonist.
-*   **StorytellerNode**: A `gemini-3.1-flash-lite-preview` LLM Agent strictly isolated to prose generation.
-*   **AuditorNode**: A pure Python Function Node that evaluates the Storyteller's output against dynamic integrity constraints (Epistemic Boundaries and Anti-Worf rules). If the prose violates rules, it routes backward to rewrite it.
-*   **ArchivistNode**: A `PlanReAct` LLM Agent that *never* generates prose. It exclusively invokes tools (`record_divergence`, `advance_timeline`, `track_power_strain`) to mutate the Pydantic State and World Bible.
+## 🚀 Key Features
 
-### 2. Stateful Memory & Session Management
-*   **FableAgentState**: A highly structured `pydantic` state representation that holds the "Hot State" (current timeline date, protagonist power strain, character trust levels, active scene variables).
-*   **GraphRAG Engine**: Built locally using Postgres (`pgvector`) and Ollama (`nomic-embed-text:v1.5`). Implements Epistemic Filtering so characters can only retrieve information they canonically "know."
+*   **Deterministic Orchestration:** Control flow is managed by the ADK `Workflow` Graph. The `Storyteller` writes prose, the `Auditor` checks it against canon rules, and the `Archivist` mutates the persistent state using tools. If an LLM hallucinates, the graph catches the failure and explicitly routes backward to regenerate.
+*   **Event-Sourced Timelines:** The database doesn't just hold the "current" state; it holds an immutable ledger of every event. If you click **"Undo"**, the native ADK `rewind_async()` API flawlessly reconstructs the timeline backward to the exact millisecond before the mistake.
+*   **Parallel Research Swarm:** Fable 2.0 can handle wild crossover fanfiction out-of-the-box. Inputting a prompt dynamically spawns a parallel swarm of `LoreHunter` agents (via ADK's `parallel_worker=True`) that execute Google Searches and scrape wikis simultaneously, synthesizing the rules of the crossover into a rigid "World Bible" before Chapter 1 begins.
+*   **Semantic Suspicion Engine:** Using local Ollama `pgvector` embeddings, the engine calculates real-time cosine similarity between the generated prose and hidden "forbidden concepts." If the protagonist brushes up against a secret, the engine mathematically detects the subtext and dynamically shifts the interactive UI into a 4-tier "Awareness Spectrum."
+*   **Dynamic Prompt Assembly:** Replaces "Super Prompts." Micro-agents receive highly targeted instructions via ADK Plugins only when necessary (e.g., injecting an aggressive "Anti-Nerf" prompt if the protagonist operates on a continental scale). See [PROMPTING_STRATEGY.md](docs/PROMPTING_STRATEGY.md).
 
-### 3. Server Integration
-*   The system runs on **FastAPI**.
-*   Real-time execution is handled via **WebSockets**. The ADK 2.0 `runner.run_async()` generator is consumed by the server, filtering internal ADK Event objects to stream narrative text, tool execution statuses, and `RequestInput` pauses to the frontend UI.
+---
 
-## Getting Started
+## 🏗️ Tech Stack
 
-1. **Install Dependencies:**
-   ```bash
-   uv sync
-   uv pip install fastapi uvicorn
-   ```
+*   **Framework:** Google ADK 2.0 Beta (`google.adk`)
+*   **LLM Backend:** Gemini 3.1 Flash Lite Preview (via Google GenAI SDK)
+*   **Memory / Retrieval:** PostgreSQL (`pgvector`) + Local Ollama (`nomic-embed-text:v1.5`)
+*   **API Server:** FastAPI + WebSockets
+*   **Frontend:** React, Vite, TailwindCSS v4, Framer Motion
 
-2. **Database Setup:**
-   Ensure you have a local PostgreSQL instance running. 
-   ```bash
-   psql -U postgres -c "CREATE DATABASE fable2_0;"
-   psql -U postgres -d fable2_0 -c "CREATE EXTENSION IF NOT EXISTS vector;"
-   ```
-   Then initialize the schema:
-   ```bash
-   PYTHONPATH=. .venv/bin/python src/database.py
-   ```
+---
 
-3. **Start the Local Engine:**
-   ```bash
-   uvicorn src.main:app --host 127.0.0.1 --port 8001 --reload
-   ```
+## 🛠️ Local Setup Instructions
 
-## Running the System
+### 1. Prerequisites
+- **Python 3.12+**
+- **Node.js 20+**
+- **Ollama** (Running locally with `nomic-embed-text:v1.5`)
+- **PostgreSQL** (with `pgvector` extension enabled)
+- `uv` (Fast Python package installer)
 
-To fully experience the narrative simulation, you must start both the ADK 2.0 Engine and the React UI.
+### 2. Environment Configuration
+Clone the repository and create an environment file at the root:
+```bash
+echo "GEMINI_API_KEY=your_google_ai_studio_key" > .env
+```
 
-### 1. Start the Backend (ADK 2.0 Engine)
-The backend is a FastAPI application that drives the ADK state machine.
-*   **Location:** Project Root (`/Users/itish/Downloads/fable2.0`)
-*   **Port:** 8001
-*   **Command:**
-    ```bash
-    PYTHONPATH=. .venv/bin/uvicorn src.main:app --host 127.0.0.1 --port 8001 --reload
-    ```
+### 3. Database Initialization
+Ensure your local PostgreSQL server is running, then create the database and extension:
+```bash
+psql -U postgres -c "CREATE DATABASE fable2_0;"
+psql -U postgres -d fable2_0 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+```
+Install Python dependencies via `uv` and initialize the schema:
+```bash
+uv sync
+PYTHONPATH=. uv run python src/database.py
+```
 
-### 2. Start the Frontend (React UI)
-The frontend is a Vite-based React app that connects to the engine via WebSockets.
-*   **Location:** `/Users/itish/Downloads/fable2.0/frontend`
-*   **Port:** 5173 (default Vite port)
-*   **Command:**
-    ```bash
-    cd frontend
-    npm run dev
-    ```
+---
 
-Once both are running, open your browser to **http://localhost:5173**. The UI will automatically create a session and trigger the initial **World Builder** setup wizard.
+## 🎮 Running the Simulation
 
-## Development Phases
-This project was strictly implemented across 9 distinct phases:
-1. `PHASE_1_STATE_MODEL`: Pydantic Models & Session Manager
-2. `PHASE_2_GRAPHRAG`: Postgres, pgvector & Local Ollama Embeddings
-3. `PHASE_3_NODE_CONFIG`: Agent wrapping & strict Tool execution
-4. `PHASE_4_ORCHESTRATION`: The DAG State Machine
-5. `PHASE_5_WORLD_BOOT`: Interactive `RequestInput` World Building
-6. `PHASE_6_SERVER_INTEGRATION`: FastAPI & WebSocket Runner Loop
-7. `PHASE_7_PRODUCTIONIZATION`: Telemetry, Context Compaction & Error Recovery
-8. `PHASE_8_DYNAMIC_INIT`: ADK native `parallel_worker=True` Research Swarm using `GoogleSearchTool`.
-9. `PHASE_9_NARRATIVE_INTELLIGENCE`: Native `rewind_async` UI, Rolling Context Summarization, and Choice Generation.
+To fully experience the Fable 2.0 narrative simulation, you must boot both the ADK engine server and the React frontend.
+
+### Terminal 1: The Engine (Backend)
+```bash
+PYTHONPATH=. uv run uvicorn src.main:app --host 127.0.0.1 --port 8001
+```
+
+### Terminal 2: The Interface (Frontend)
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Navigate to **http://localhost:5173** in your browser. The system will automatically establish a secure WebSocket connection to the ADK `Runner` and trigger the multi-turn, interactive World Builder setup sequence.

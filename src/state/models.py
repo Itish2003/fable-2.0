@@ -102,3 +102,6 @@ class FableAgentState(BaseModel):
     chapter_summaries: List[str] = Field(default_factory=list, description="Rolling summaries of previous chapters.")
     last_user_choice: str = Field(default="", description="The last action the user chose.")
     last_story_text: str = Field(default="", description="The raw prose generated in the previous turn.")
+
+    # Auditor violation history (written by the report_violation tool)
+    violation_log: List[Dict[str, Any]] = Field(default_factory=list, description="Audit trail of canon/tone violations flagged during play.")

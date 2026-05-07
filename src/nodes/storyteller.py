@@ -1,8 +1,5 @@
-from typing import Optional
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.agents.llm_agent_config import LlmAgentConfig
-
-from src.plugins.global_instruction import GlobalInstructionPlugin
 
 # We use the highly efficient gemini-3.1-flash-lite-preview model as requested
 STORYTELLER_MODEL = "gemini-3.1-flash-lite-preview"

@@ -18,7 +18,7 @@ async def run_world_builder(
     Interactive Node for setting up a new story.
     Re-engineers the V1 FableWeaver setup flow to use ADK 2.0 RequestInput mechanics.
     """
-    state_key = "world_builder_state"
+    state_key = "temp:world_builder_state"
     builder_state = ctx.state.get(state_key, {"step": "lore_dump"})
     
     if builder_state["step"] == "lore_dump":
@@ -59,7 +59,7 @@ async def run_world_builder(
             except Exception:
                 config = {"power_level": "city", "story_tone": "balanced", "isolate_powerset": True}
                 
-            ctx.state["config"] = config
+            ctx.state["temp:config"] = config
             builder_state["step"] = "complete"
             ctx.state[state_key] = builder_state
             
@@ -69,7 +69,7 @@ async def run_world_builder(
         # Inject the state directly into the global session state dictionary.
         # This persists properly to Postgres and triggers state_delta events.
         ctx.state["story_premise"] = ctx.state.get("story_premise", "")
-        config = ctx.state.get("config", {})
+        config = ctx.state.get("temp:config", {})
         ctx.state["power_level"] = config.get("power_level", "city")
         ctx.state["story_tone"] = config.get("story_tone", "balanced")
         ctx.state["isolate_powerset"] = config.get("isolate_powerset", True)

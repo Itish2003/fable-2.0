@@ -1,56 +1,67 @@
-import logging
-from typing import Any, Optional
+"""Strain-tracking telemetry plugin.
 
-from google.adk.plugins.base_plugin import BasePlugin
+Observes ``after_model_callback`` for the Storyteller and converts
+heavy reasoning overhead into ``power_debt.strain_level`` increments.
+Mutates state via plain dict assignment so the change is event-sourced
+and survives resume — no Pydantic round-trip.
+
+Raw token-usage logging is delegated to ADK's bundled ``LoggingPlugin``
+(registered in ``src.app_container``).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
+from google.adk.plugins.base_plugin import BasePlugin
 
 logger = logging.getLogger("fable.telemetry")
 
+# Reasoning-token budget below which we don't accrue strain.
+REASONING_STRAIN_FLOOR = 50
+
+
 class TelemetryPlugin(BasePlugin):
+    """Adds narrative strain to ``power_debt`` when the Storyteller burns
+    significant reasoning tokens.
     """
-    Observes LLM UsageMetadata for each agent turn.
-    Logs telemetry (prompt tokens, reasoning tokens) and adjusts
-    the narrative strain (power_debt) dynamically.
-    """
-    
-    def __init__(self):
+
+    def __init__(self) -> None:
         super().__init__(name="fable_telemetry_plugin")
 
     async def after_model_callback(
         self,
         *,
         callback_context: CallbackContext,
-        llm_response: LlmResponse
+        llm_response: LlmResponse,
     ) -> Optional[LlmResponse]:
-        """Called after a response is received from the model."""
-        
+        if callback_context.agent_name != "storyteller":
+            return None
+
         usage = getattr(llm_response, "usage_metadata", None)
-        if usage:
-            p_tokens = getattr(usage, "prompt_token_count", 0)
-            c_tokens = getattr(usage, "cached_content_token_count", 0)
-            # Check for Gemini 1.5 Pro/Flash Reasoning Tokens
-            r_tokens = getattr(usage, "reasoning_token_count", 0)
-            
-            logger.info(
-                f"[Telemetry] Agent: {callback_context.agent_name} | "
-                f"Prompt: {p_tokens} (Cached: {c_tokens}) | "
-                f"Reasoning: {r_tokens}"
-            )
-            
-            # Dynamic Strain Calculation
-            if callback_context.agent_name == "storyteller" and r_tokens > 50:
-                try:
-                    state = FableAgentState(**{k: callback_context.state[k] for k in callback_context.state._value.keys() | callback_context.state._delta.keys()})
-                    if hasattr(state, "power_debt"):
-                        logger.warning(
-                            f"Heavy reasoning overhead detected ({r_tokens} tokens). "
-                            "Applying Power Debt strain to protagonist."
-                        )
-                        state.power_debt.strain_level += (r_tokens // 50)
-                        # Push back to context state to trigger delta
-                        callback_context.state["power_debt"] = state.power_debt.model_dump()
-                except Exception as e:
-                    logger.error(f"Failed to apply telemetry strain: {e}")
-                    
+        if usage is None:
+            return None
+
+        reasoning_tokens = getattr(usage, "reasoning_token_count", 0) or 0
+        if reasoning_tokens <= REASONING_STRAIN_FLOOR:
+            return None
+
+        # Dict-based state mutation — event-sourced, resume-safe.
+        power_debt = dict(callback_context.state.get("power_debt") or {})
+        current_strain = int(power_debt.get("strain_level", 0))
+        new_strain = current_strain + (reasoning_tokens // 50)
+        power_debt["strain_level"] = new_strain
+        # Preserve recent_feats if present; default to [] if not.
+        power_debt.setdefault("recent_feats", [])
+        callback_context.state["power_debt"] = power_debt
+
+        logger.warning(
+            "Heavy reasoning overhead (%s tokens) → strain %s -> %s",
+            reasoning_tokens,
+            current_strain,
+            new_strain,
+        )
         return None

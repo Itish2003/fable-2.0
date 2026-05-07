@@ -4,18 +4,33 @@ from google.adk.agents.context import Context
 
 logger = logging.getLogger("fable.recovery")
 
+_RECOVERY_PROSE = (
+    "The narrative weave momentarily destabilizes. The threads tangle, "
+    "and the next moment hangs in unresolved silence. Choose how the "
+    "story finds its footing again."
+)
+
+
 async def run_recovery(
     ctx: Context,
     node_input: Any,
 ) -> str:
     """
-    Acts as a graceful degradation fallback.
-    If the graph hits an unrecoverable state or throws an exception,
-    the workflow is routed here. It logs the issue and yields a safe fallback.
+    Graceful-degradation fallback after 3 consecutive auditor failures.
+
+    Skips the broken turn cleanly:
+    1. Writes a brief fallback into ``last_story_text`` so the
+       choice generator has anchoring context.
+    2. Resets the auditor retry counter (``temp:audit_retries``).
+    3. Returns; the workflow edge routes to ``choice_generator_agent_node``,
+       letting the player redirect the story.
     """
-    logger.error(f"Recovery Node triggered! Input caused failure: {node_input}")
-    
-    # In a full implementation, we might try to clean the state or downgrade the model
-    # For now, we simply act as a safe end-point to prevent WebSocket crashes.
-    
+    logger.error(
+        "Recovery node triggered after auditor failures. node_input=%r",
+        node_input,
+    )
+
+    ctx.state["last_story_text"] = _RECOVERY_PROSE
+    ctx.state["temp:audit_retries"] = 0
+
     return "recovered"

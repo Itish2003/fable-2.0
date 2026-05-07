@@ -122,6 +122,15 @@ export function useStory() {
             setChoices([]);
             break;
             
+          case 'rewrite_started':
+            setIsTyping(true);
+            setProse(prev => prev + '\n\n**[System]**: Applying rewrite constraint and regenerating timeline...\n\n');
+            // Remove the last invocation since it was undone
+            setInvocationHistory(prev => prev.slice(0, -1));
+            setPendingInput(null);
+            setChoices([]);
+            break;
+            
           case 'error':
             setIsTyping(false);
             setProse(prev => prev + `\n\n[System Error]: ${data.message}\n\n`);
@@ -194,6 +203,23 @@ export function useStory() {
     }));
   }, [invocationHistory]);
 
+  const rewriteTurn = useCallback((instruction: string) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (invocationHistory.length === 0) return;
+    
+    // We want to rewind BEFORE the last turn
+    const lastInvocation = invocationHistory[invocationHistory.length - 1];
+    
+    setIsTyping(true);
+    setProse(prev => prev + `\n\n**[System]**: Requesting rewrite constraint: "${instruction}"...\n\n`);
+    
+    wsRef.current.send(JSON.stringify({
+      action: 'rewrite',
+      invocation_id: lastInvocation,
+      instruction: instruction
+    }));
+  }, [invocationHistory]);
+
   return {
     isConnected,
     isTyping,
@@ -206,6 +232,7 @@ export function useStory() {
     sendChoice,
     submitInput,
     undoTurn,
+    rewriteTurn,
     canUndo: invocationHistory.length > 0
   };
 }

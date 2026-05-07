@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Activity, Database, ServerCrash, Cpu } from 'lucide-react';
+import { Send, Activity, Database, ServerCrash, Cpu, Edit3 } from 'lucide-react';
 
 export type RequestInputData = {
   interrupt_id: string;
@@ -24,12 +24,13 @@ interface StoryViewProps {
     sendChoice: (msg: string) => void;
     submitInput: (txt: string) => void;
     undoTurn: () => void;
+    rewriteTurn: (instruction: string) => void;
     canUndo: boolean;
   }
 }
 
 export default function StoryView({ story }: StoryViewProps) {
-  const { isConnected, isTyping, prose, pendingInput, choices, loreUpdates, sendChoice, submitInput, undoTurn, canUndo } = story;
+  const { isConnected, isTyping, prose, pendingInput, choices, loreUpdates, sendChoice, submitInput, undoTurn, rewriteTurn, canUndo } = story;
   const [inputText, setInputText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -48,6 +49,13 @@ export default function StoryView({ story }: StoryViewProps) {
       sendChoice(inputText.trim());
     }
     setInputText('');
+  };
+
+  const handleRewrite = () => {
+    const instruction = window.prompt("What should change in the story?");
+    if (instruction && instruction.trim()) {
+      rewriteTurn(instruction.trim());
+    }
   };
 
   return (
@@ -149,14 +157,24 @@ export default function StoryView({ story }: StoryViewProps) {
 
             <div className="flex items-center space-x-2">
               {canUndo && !isTyping && (
-                <button
-                  onClick={undoTurn}
-                  disabled={!isConnected}
-                  className="p-4 rounded-xl bg-rose-900/30 text-rose-400 border border-rose-800/50 hover:bg-rose-900/50 hover:text-rose-300 transition-colors"
-                  title="Undo Last Turn"
-                >
-                  <ServerCrash className="w-5 h-5" />
-                </button>
+                <>
+                  <button
+                    onClick={undoTurn}
+                    disabled={!isConnected}
+                    className="p-4 rounded-xl bg-rose-900/30 text-rose-400 border border-rose-800/50 hover:bg-rose-900/50 hover:text-rose-300 transition-colors"
+                    title="Undo Last Turn"
+                  >
+                    <ServerCrash className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={handleRewrite}
+                    disabled={!isConnected}
+                    className="p-4 rounded-xl bg-indigo-900/30 text-indigo-400 border border-indigo-800/50 hover:bg-indigo-900/50 hover:text-indigo-300 transition-colors"
+                    title="Rewrite Last Turn"
+                  >
+                    <Edit3 className="w-5 h-5" />
+                  </button>
+                </>
               )}
               
               <form 

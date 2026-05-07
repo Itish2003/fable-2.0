@@ -20,7 +20,8 @@ async def execute_adk_turn(
     user_id: str = "local_tester",
     message_text: Optional[str] = None,
     resume_payload: Optional[Any] = None,
-    interrupt_id: Optional[str] = None
+    interrupt_id: Optional[str] = None,
+    rewrite_instruction: Optional[str] = None
 ):
     """
     Executes a single turn of the ADK 2.0 graph.
@@ -36,7 +37,12 @@ async def execute_adk_turn(
     logger.info(f"Executing turn for App: {fable_runner.app_name}, Session: {session_id}, User: {user_id}")
     
     # 1. Prepare Input
-    if message_text and message_text != "/start":
+    if rewrite_instruction:
+        run_kwargs["new_message"] = types.Content(
+            role="user", 
+            parts=[types.Part.from_text(text=f"[SYSTEM REWRITE CONSTRAINT]: {rewrite_instruction}")]
+        )
+    elif message_text and message_text != "/start":
         run_kwargs["new_message"] = types.Content(
             role="user", 
             parts=[types.Part.from_text(text=message_text)]

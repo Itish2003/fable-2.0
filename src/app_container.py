@@ -7,6 +7,7 @@ from src.services.session_manager import session_service
 from src.services.memory_service import memory_service
 from src.plugins.global_instruction import GlobalInstructionPlugin
 from src.plugins.telemetry import TelemetryPlugin
+from src.plugins.suspicion_plugin import SuspicionPlugin
 
 # 1. Build the ADK 2.0 Graph Workflow
 fable_main_workflow = build_fable_workflow()
@@ -17,7 +18,8 @@ fable_app = App(
     root_agent=fable_main_workflow,  # ADK 2.0 Beta quirk: root_agent accepts Workflow/BaseNode
     plugins=[
         GlobalInstructionPlugin(),
-        TelemetryPlugin()
+        TelemetryPlugin(),
+        SuspicionPlugin()
     ],
     events_compaction_config=EventsCompactionConfig(
         # In a real app, this limits how many raw events to keep before summarizing

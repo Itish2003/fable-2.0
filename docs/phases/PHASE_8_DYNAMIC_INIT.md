@@ -48,7 +48,7 @@ The `LoreKeeper` will strictly populate these keys in `ctx.state`:
     *   Add the `ReviewStep` to the `SetupWizard.tsx` to handle the final approval.
 
 ## 5. Validation Criteria
-*   [ ] A crossover prompt correctly triggers multiple parallel `LoreHunter` runs.
-*   [ ] The `LoreKeeper` successfully populates `ctx.state["anti_worf_rules"]` with data fetched from the web.
-*   [ ] The UI successfully renders the "World Primer" summary and waits for the "Ignite" command.
-*   [ ] The `Storyteller` uses the newly researched crossover data in the very first paragraph of Chapter 1.
+*   [x] A crossover prompt correctly triggers multiple parallel `LoreHunter` runs.
+*   [x] The `LoreKeeper` successfully populates `ctx.state["anti_worf_rules"]` with data fetched from the web.
+*   [x] The UI successfully renders the "World Primer" summary and waits for the "Ignite" command.
+*   [x] The `Storyteller` uses the newly researched crossover data in the very first paragraph of Chapter 1.

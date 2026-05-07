@@ -62,10 +62,11 @@ async def story_websocket(websocket: WebSocket, session_id: str):
     try:
         # Upon initial connection, trigger the WorldBuilder setup node
         # ADK 2.0 Beta requires a new_message to start a root node traversal on a fresh session
-        asyncio.create_task(execute_adk_turn(
+        task = asyncio.create_task(execute_adk_turn(
             session_id=session_id,
             message_text="/start"
         ))
+        manager.register_task(session_id, task)
         
         while True:
             # Wait for client messages
@@ -76,6 +77,7 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                 invocation_id = data.get("invocation_id")
                 if invocation_id:
                     logger.info(f"Rewinding session {session_id} before invocation {invocation_id}")
+                    manager.cancel_active_task(session_id)
                     try:
                         from src.app_container import fable_runner
                         await fable_runner.rewind_async(
@@ -88,6 +90,35 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                         logger.error(f"Failed to rewind: {e}")
                         await manager.send_personal_message({"type": "error", "message": "Rewind failed."}, session_id)
                 continue
+                
+            # 2. Handle Rewrite Action
+            if data.get("action") == "rewrite":
+                invocation_id = data.get("invocation_id")
+                instruction = data.get("instruction")
+                if invocation_id and instruction:
+                    logger.info(f"Rewriting session {session_id} from invocation {invocation_id} with instruction: {instruction}")
+                    manager.cancel_active_task(session_id)
+                    try:
+                        from src.app_container import fable_runner
+                        await fable_runner.rewind_async(
+                            user_id="local_tester",
+                            session_id=session_id,
+                            rewind_before_invocation_id=invocation_id
+                        )
+                        await manager.send_personal_message({"type": "rewrite_started"}, session_id)
+                        
+                        # We trigger a new turn with the rewrite instruction
+                        task = asyncio.create_task(
+                            execute_adk_turn(
+                                session_id=session_id,
+                                rewrite_instruction=instruction
+                            )
+                        )
+                        manager.register_task(session_id, task)
+                    except Exception as e:
+                        logger.error(f"Failed to rewrite: {e}")
+                        await manager.send_personal_message({"type": "error", "message": "Rewrite failed."}, session_id)
+                continue
             
             # Extract routing info for normal turns
             interrupt_id = data.get("interrupt_id")
@@ -95,7 +126,7 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             message_text = data.get("message")
             
             # Fire and forget the ADK execution turn
-            asyncio.create_task(
+            task = asyncio.create_task(
                 execute_adk_turn(
                     session_id=session_id,
                     message_text=message_text,
@@ -103,6 +134,7 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                     interrupt_id=interrupt_id
                 )
             )
+            manager.register_task(session_id, task)
             
     except WebSocketDisconnect:
         manager.disconnect(session_id)

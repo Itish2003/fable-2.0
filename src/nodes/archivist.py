@@ -1,7 +1,6 @@
 from typing import Optional
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.agents.llm_agent_config import LlmAgentConfig
-from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 
 from src.tools.archivist_tools import ARCHIVIST_TOOLS
 
@@ -16,13 +15,6 @@ def create_archivist_node() -> LlmAgent:
     It does not write prose to the user.
     """
     
-    # We configure the PlanReActPlanner to ensure the LLM forms a plan
-    # before attempting to mutate the Pydantic state, ensuring schema compliance.
-    planner = PlanReActPlanner(
-        # We can enforce tool usage natively in ADK
-        # tool_choice="any" 
-    )
-    
     agent_config = LlmAgentConfig(
         name="archivist",
         description="Analyzes narrative prose and updates the World Bible state using tools.",
@@ -36,7 +28,7 @@ def create_archivist_node() -> LlmAgent:
     
     # Initialize the LLM Agent
     archivist_agent = LlmAgent.from_config(agent_config, config_abs_path="")
+    # By simply attaching tools, ADK 2.0 uses native Gemini Function Calling automatically
     archivist_agent.tools = ARCHIVIST_TOOLS 
-    archivist_agent.planner = planner
     
     return archivist_agent

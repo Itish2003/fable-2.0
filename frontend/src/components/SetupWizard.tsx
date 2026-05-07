@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, SlidersHorizontal, ArrowRight, ShieldAlert, Cpu } from 'lucide-react';
+import { BookOpen, Sparkles, SlidersHorizontal, ArrowRight, ShieldAlert, Cpu, Search, CheckCircle2 } from 'lucide-react';
 
 type RequestInputData = {
   interrupt_id: string;
@@ -11,9 +11,10 @@ interface SetupWizardProps {
   pendingInput: RequestInputData | null;
   submitInput: (text: string) => void;
   isConnected: boolean;
+  isResearching: boolean;
 }
 
-export default function SetupWizard({ pendingInput, submitInput, isConnected }: SetupWizardProps) {
+export default function SetupWizard({ pendingInput, submitInput, isConnected, isResearching }: SetupWizardProps) {
   // Step 1: Lore Dump
   const [loreDump, setLoreDump] = useState('');
   
@@ -21,6 +22,31 @@ export default function SetupWizard({ pendingInput, submitInput, isConnected }: 
   const [powerLevel, setPowerLevel] = useState('city');
   const [storyTone, setStoryTone] = useState('balanced');
   const [isolatePowerset, setIsolatePowerset] = useState(true);
+
+  if (isResearching) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950 p-6">
+        <motion.div 
+          key="researching"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center space-y-6 max-w-md text-center"
+        >
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ repeat: Infinity, duration: 4, ease: "linear" }}
+            className="w-24 h-24 border-t-2 border-l-2 border-emerald-500 rounded-full flex items-center justify-center relative"
+          >
+            <Search className="w-8 h-8 text-emerald-400 absolute" />
+          </motion.div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-serif text-slate-100">Swarm Deployed</h2>
+            <p className="text-slate-400">Lore Hunters are actively searching wikis and processing local source text to synthesize your crossover ruleset...</p>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   if (!pendingInput) {
     return (
@@ -39,6 +65,7 @@ export default function SetupWizard({ pendingInput, submitInput, isConnected }: 
 
   const isLoreDump = pendingInput.interrupt_id === 'setup_lore_dump';
   const isConfig = pendingInput.interrupt_id === 'setup_configuration';
+  const isPrimer = pendingInput.interrupt_id === 'setup_world_primer';
 
   const handleSubmitLore = () => {
     if (!loreDump.trim()) return;
@@ -53,6 +80,10 @@ export default function SetupWizard({ pendingInput, submitInput, isConnected }: 
     });
     submitInput(configData);
   };
+  
+  const handleApprovePrimer = () => {
+    submitInput("Approved.");
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6">
@@ -176,10 +207,47 @@ export default function SetupWizard({ pendingInput, submitInput, isConnected }: 
                   className="flex items-center space-x-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-lg font-medium transition-all"
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>Ignite Simulation</span>
+                  <span>Execute Research Swarm</span>
                 </button>
               </div>
               
+            </div>
+          </motion.div>
+        )}
+        
+        {/* WORLD PRIMER STEP */}
+        {isPrimer && (
+          <motion.div 
+            key="primer"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="w-full max-w-4xl max-h-[85vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+          >
+            <div className="bg-slate-950/50 p-6 border-b border-slate-800 shrink-0">
+              <h1 className="text-3xl font-serif text-slate-100 flex items-center space-x-3">
+                <CheckCircle2 className="w-8 h-8 text-indigo-400" />
+                <span>World Primer Synthesis</span>
+              </h1>
+              <p className="mt-2 text-slate-400">The Swarm has successfully compiled the crossover constraints. Please review the extracted rules before igniting the engine.</p>
+            </div>
+            
+            <div className="p-6 overflow-y-auto space-y-4 font-mono text-sm text-slate-300">
+                {/* Try to parse and format the JSON if possible, otherwise just pre */}
+                <pre className="whitespace-pre-wrap bg-slate-950 p-4 rounded-xl border border-slate-800">
+                    {pendingInput.message}
+                </pre>
+            </div>
+            
+            <div className="p-6 border-t border-slate-800 bg-slate-900 shrink-0 flex justify-end">
+                <button
+                  onClick={handleApprovePrimer}
+                  disabled={!isConnected}
+                  className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-lg font-medium transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)]"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  <span>Ignite Storyteller</span>
+                </button>
             </div>
           </motion.div>
         )}

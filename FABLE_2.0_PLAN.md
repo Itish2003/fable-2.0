@@ -153,11 +153,18 @@ Fable 2.0 is built on the engineering philosophy extracted from the **ADK 2.0 Be
 
 ## 9. Implementation Roadmap
 
-1.  **Phase 1: Pure State Model** (Define `FableAgentState` Pydantic models).
-2.  **Phase 2: GraphRAG Infrastructure** (Setup `VertexAiRagMemoryService` and LN Ingestion).
-3.  **Phase 3: Node Configuration** (Build `Storyteller`, `Archivist`, and `Auditor` wrappers, apply GEPA).
-4.  **Phase 4: Workflow Orchestration** (Construct the `Workflow` graph with `EdgeItem`, `JoinNode`, and HITL logic).
-5.  **Phase 5: World Simulation Boot** (Implement `WorldBuilderNode` for interactive setup).
+1.  **Phase 1: Pure State Model** (DONE)
+2.  **Phase 2: GraphRAG Infrastructure** (DONE)
+3.  **Phase 3: Node Configuration** (DONE)
+4.  **Phase 4: Workflow Orchestration** (DONE)
+5.  **Phase 5: World Simulation Boot** (DONE)
+6.  **Phase 6: Server & WebSocket Integration** (DONE)
+7.  **Phase 7: Productionization & Advanced Telemetry** (DONE)
+8.  **Phase 8: Advanced Dynamic Initialization & Research Swarm** (PENDING)
+    *   Implement `QueryPlannerNode` to analyze crossover prompts.
+    *   Implement parallel `LoreHunter` nodes for local/web data fusion.
+    *   Implement `LoreKeeper` synthesis agent to build the World Bible.
+    *   Implement HITL `ApprovalNode` for final world-primer review.
 
 ---
 

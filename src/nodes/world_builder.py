@@ -85,6 +85,4 @@ async def run_world_builder(
         ctx.state["forbidden_concepts"] = []
         ctx.state["anti_worf_rules"] = {}
         
-        yield {
-            "setup_status": "complete"
-        }
+        # We no longer yield setup_complete here, as the graph continues to the Swarm.

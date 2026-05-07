@@ -18,6 +18,7 @@ export function useStory() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [isResearching, setIsResearching] = useState(false);
   
   const [prose, setProse] = useState<string>('');
   const [pendingInput, setPendingInput] = useState<RequestInputData | null>(null);
@@ -65,29 +66,29 @@ export function useStory() {
           case 'text_delta':
             setIsTyping(true);
             setProse(prev => prev + data.text);
+            // If we are getting text deltas, we are definitely done with setup
+            setSetupComplete(true);
             break;
             
           case 'request_input':
             setIsTyping(false);
+            setIsResearching(false);
             setPendingInput({
               interrupt_id: data.interrupt_id,
               message: data.message
             });
             // Ensure prose has a clean break before the prompt
-            setProse(prev => prev + `\n\n> *${data.message}*\n\n`);
+            if (data.interrupt_id !== 'setup_lore_dump' && data.interrupt_id !== 'setup_configuration' && data.interrupt_id !== 'setup_world_primer') {
+                setProse(prev => prev + `\n\n> *${data.message}*\n\n`);
+            }
             break;
             
           case 'status':
-            // We overloaded 'status' in runner.py to send the setup complete event too
-            if (data.message === 'setup_complete') {
-                setSetupComplete(true);
-            } else {
-                loreIdRef.current += 1;
-                setLoreUpdates(prev => [
-                { id: loreIdRef.current, message: data.message, timestamp: new Date().toLocaleTimeString() },
-                ...prev
-                ]);
-            }
+            loreIdRef.current += 1;
+            setLoreUpdates(prev => [
+            { id: loreIdRef.current, message: data.message, timestamp: new Date().toLocaleTimeString() },
+            ...prev
+            ]);
             break;
             
           case 'turn_complete':
@@ -128,7 +129,19 @@ export function useStory() {
   const submitInput = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !pendingInput) return;
     
-    setProse(prev => prev + `**[Reply]**: ${text}\n\n`);
+    if (pendingInput.interrupt_id !== 'setup_lore_dump' && pendingInput.interrupt_id !== 'setup_configuration' && pendingInput.interrupt_id !== 'setup_world_primer') {
+        setProse(prev => prev + `**[Reply]**: ${text}\n\n`);
+    }
+    
+    if (pendingInput.interrupt_id === 'setup_configuration') {
+        setIsResearching(true);
+    }
+    
+    // Once primer is approved, we are waiting for the storyteller, no longer researching
+    if (pendingInput.interrupt_id === 'setup_world_primer') {
+        setIsResearching(false);
+    }
+    
     setIsTyping(true);
     
     wsRef.current.send(JSON.stringify({
@@ -142,6 +155,7 @@ export function useStory() {
   return {
     isConnected,
     isTyping,
+    isResearching,
     prose,
     pendingInput,
     loreUpdates,

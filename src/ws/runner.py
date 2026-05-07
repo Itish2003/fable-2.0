@@ -116,13 +116,6 @@ async def execute_adk_turn(
                             "type": "status",
                             "message": f"Writing to Lore Bible: {name}..."
                         }, session_id)
-            
-            # Catch WorldBuilder dictionary yield
-            if isinstance(event, dict) and event.get("setup_status") == "complete":
-                await manager.send_personal_message({
-                    "type": "status",
-                    "message": "setup_complete"
-                }, session_id)
                     
         # When generator is exhausted
         await manager.send_personal_message({

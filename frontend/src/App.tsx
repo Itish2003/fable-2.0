@@ -6,7 +6,7 @@ function App() {
   const story = useStory();
 
   if (!story.setupComplete) {
-    return <SetupWizard pendingInput={story.pendingInput} submitInput={story.submitInput} isConnected={story.isConnected} />;
+    return <SetupWizard pendingInput={story.pendingInput} submitInput={story.submitInput} isConnected={story.isConnected} isResearching={story.isResearching} />;
   }
 
   return (

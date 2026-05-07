@@ -28,6 +28,14 @@ async def summarizer_node(ctx: Context, node_input: Any) -> AsyncGenerator[Event
     """
     Parses the summary from the Summarizer LLM and appends it to ctx.state["chapter_summaries"].
     """
+    # In ADK, node_input is the output from the previous node (the Storyteller, or the Archivist).
+    # Since Archivist doesn't return prose, we fetch it from the graph history.
+    # Wait, in the graph: Storyteller -> Auditor -> Archivist -> Summarizer.
+    # Archivist returns an empty event. So node_input doesn't have the story text.
+    # Let's pull the last story text from the context state.
+    state = FableAgentState(**{k: ctx.state[k] for k in ctx.state._value.keys() | ctx.state._delta.keys()})
+    story_text = state.last_story_text
+    
     summary_text = ""
     try:
         if hasattr(node_input, "content") and node_input.content and node_input.content.parts:
@@ -36,20 +44,14 @@ async def summarizer_node(ctx: Context, node_input: Any) -> AsyncGenerator[Event
         logger.error(f"Failed to parse Summarizer output: {e}")
         
     if summary_text:
-        # Access state, getting existing summaries
-        summaries = ctx.state.get("chapter_summaries", [])
-        
-        # In case the state proxy requires explicit re-assignment to detect changes:
-        new_summaries = list(summaries)
+        new_summaries = state.chapter_summaries
         new_summaries.append(summary_text)
         
         # Write back to state to trigger ADK persistence
         ctx.state["chapter_summaries"] = new_summaries
         logger.info(f"Appended summary. Total summaries: {len(new_summaries)}")
         
-    # Yield the summary text as content so the next node (choice_generator_agent)
-    # has the context of what just happened to base choices off of.
-    # Alternatively, the choice generator might just read the whole state.
-    # We yield the node_input (the summary) or the full state.
-    # Yielding an Event to continue graph flow.
-    yield Event()
+    # CRITICAL FIX: The choice_generator is an LlmAgent node next in the graph. 
+    # If we yield an empty Event(), it receives no context. We MUST pass the story_text
+    # forward as the content so the LLM knows what to generate choices for.
+    yield Event(content=types.Content(role="user", parts=[types.Part.from_text(text=story_text)]))

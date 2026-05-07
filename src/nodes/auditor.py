@@ -53,5 +53,9 @@ async def run_auditor(
                     return
         
     logger.info("AUDIT PASSED: Text is canon-compliant.")
+    
+    # Save the raw prose so downstream nodes (Summarizer, SuspicionPlugin) can read it
+    ctx.state["last_story_text"] = story_text
+    
     # Explicitly yield the 'passed' route so the Workflow Graph can follow the edge
     yield Event(actions=EventActions(route="passed"))

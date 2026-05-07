@@ -98,6 +98,7 @@ class FableAgentState(BaseModel):
     current_mood: str = Field(default="Neutral", description="The current atmosphere/pacing of the story.")
     chapter_count: int = Field(default=1, description="Current chapter sequence number.")
     
-    # Phase 9: Long-Term Memory & User Intent
+    # Phase 9/12: Long-Term Memory & User Intent
     chapter_summaries: List[str] = Field(default_factory=list, description="Rolling summaries of previous chapters.")
     last_user_choice: str = Field(default="", description="The last action the user chose.")
+    last_story_text: str = Field(default="", description="The raw prose generated in the previous turn.")

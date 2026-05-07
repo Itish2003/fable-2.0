@@ -161,11 +161,12 @@ Fable 2.0 is built on the engineering philosophy extracted from the **ADK 2.0 Be
 6.  **Phase 6: Server & WebSocket Integration** (DONE)
 7.  **Phase 7: Productionization & Advanced Telemetry** (DONE)
 8.  **Phase 8: Advanced Dynamic Initialization & Research Swarm** (DONE)
-9.  **Phase 9: Narrative Intelligence & Long-Term Continuity** (PENDING)
-    *   Implement `ChoiceGeneratorNode` for interactive story branching.
-    *   Implement Rolling Summarization for long-term narrative memory.
-    *   Implement Mid-Story "Intent Detection" to trigger Lore Hunters on-demand.
-    *   Expose ADK `ctx.rewind()` for native Undo/Rewind UI.
+9.  **Phase 9: Narrative Intelligence & Long-Term Continuity** (DONE)
+10. **Phase 10: Narrative Guardrails & Context Sanitization** (PENDING)
+    *   Implement Context Anti-Leakage Regex Scrubber (`src/utils/sanitizer.py`).
+    *   Implement Dynamic Power Scale Enforcement (Anti-Nerf) via ADK AgentPlugin.
+    *   Implement Programmatic Fallback Extraction Node to catch LLM tool failures.
+    *   Implement 'Enrich' Auto-Analyzer to prevent World Bible decay.
 
 ---
 

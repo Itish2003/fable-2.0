@@ -74,7 +74,7 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
         return
         
     logger.info("User approved World Primer (Fallback path). Transitioning to Enrich Analyzer.")
-    yield EventActions(route="success")
+    yield Event(actions=EventActions(route="success"))
 
 # ---------------------------------------------------------------------------
 # State Injection Node
@@ -106,7 +106,7 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
     if not has_forbidden and not has_anti_worf:
         logger.warning("Lore Keeper failed to mutate state (hallucination). Routing to fallback extractor.")
         # Store the research dump / primer text so the fallback extractor can process it
-        yield EventActions(route="fallback")
+        yield Event(actions=EventActions(route="fallback"))
         return
         
     # Check if we are resuming from the review
@@ -124,4 +124,4 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
     # User approved, continue the graph
     logger.info("User approved World Primer. Transitioning to Enrich Analyzer.")
     
-    yield EventActions(route="success")
+    yield Event(actions=EventActions(route="success"))

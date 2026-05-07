@@ -40,7 +40,7 @@ async def enrich_analyzer_node(ctx: Context, node_input: Any) -> AsyncGenerator[
         logger.info(f"State is sparse. Routing to enrich. Queries: {enrichment_queries}")
         # Store the queries so query_planner or lore_hunter can pick them up in Phase 8
         ctx.state["enrichment_queries"] = enrichment_queries
-        yield EventActions(route="enrich")
+        yield Event(actions=EventActions(route="enrich"))
     else:
         logger.info("State is well-populated. Routing to story.")
-        yield EventActions(route="story")
+        yield Event(actions=EventActions(route="story"))

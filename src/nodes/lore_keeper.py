@@ -1,10 +1,13 @@
 import logging
-from typing import Any
+from typing import Any, AsyncGenerator, List, Dict
+
+from pydantic import BaseModel, Field
 
 from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.agents.llm_agent_config import LlmAgentConfig
+from google.genai import types
 
 logger = logging.getLogger("fable.lore_keeper")
 
@@ -29,13 +32,50 @@ def create_lore_keeper() -> LlmAgent:
     )
     
     agent = LlmAgent.from_config(keeper_config, config_abs_path="")
-    
-    # In a full implementation, we attach specific tools here (e.g., `update_world_bible`)
-    # that allow the agent to write its synthesis back into `ctx.state`.
-    # For now, we rely on the agent to output the synthesis for the next node.
-    
     return agent
     
+# ---------------------------------------------------------------------------
+# Fallback Extractor
+# ---------------------------------------------------------------------------
+
+class WorldBibleExtraction(BaseModel):
+    forbidden_concepts: List[str] = Field(default_factory=list, description="Secrets and spoilers the protagonist MUST NOT know.")
+    anti_worf_rules: Dict[str, str] = Field(default_factory=dict, description="Baseline competence rules for major characters.")
+
+def create_fallback_extractor() -> LlmAgent:
+    agent = LlmAgent(
+        name="fallback_extractor",
+        description="Explicitly extracts World Bible data from raw text when the primary agent fails.",
+        model="gemini-3.1-flash-lite-preview",
+        instruction="Extract the forbidden concepts and anti-worf rules from the provided text into structured JSON.",
+        output_schema=WorldBibleExtraction,
+        generate_content_config=types.GenerateContentConfig(response_mime_type="application/json")
+    )
+    return agent
+
+@node(name="fallback_injector")
+async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
+    """Injects the explicitly extracted JSON into the state."""
+    logger.info("Applying fallback extraction...")
+    if hasattr(node_input, "output") and isinstance(node_input.output, WorldBibleExtraction):
+        ctx.state["forbidden_concepts"] = node_input.output.forbidden_concepts
+        ctx.state["anti_worf_rules"] = node_input.output.anti_worf_rules
+        logger.info("Successfully populated state via fallback extractor.")
+        
+    primer_text = ctx.state.get("crossover_primer", "World Primer Synthesis Complete (Fallback).")
+    interrupt_id = "setup_world_primer"
+    resume_payload = ctx.resume_inputs.get(interrupt_id)
+    
+    if not resume_payload:
+        yield RequestInput(
+            interrupt_id=interrupt_id,
+            message=primer_text
+        )
+        return
+        
+    logger.info("User approved World Primer (Fallback path). Transitioning to Enrich Analyzer.")
+    yield EventActions(route="success")
+
 # ---------------------------------------------------------------------------
 # State Injection Node
 # ---------------------------------------------------------------------------
@@ -58,6 +98,17 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         ctx.state["crossover_primer"] = primer_text
         logger.info("Successfully injected Crossover Primer into State.")
         
+    # Programmatic Fallback Extraction
+    # Check if tools mutated the state
+    has_forbidden = "forbidden_concepts" in ctx.state._value or "forbidden_concepts" in ctx.state._delta
+    has_anti_worf = "anti_worf_rules" in ctx.state._value or "anti_worf_rules" in ctx.state._delta
+    
+    if not has_forbidden and not has_anti_worf:
+        logger.warning("Lore Keeper failed to mutate state (hallucination). Routing to fallback extractor.")
+        # Store the research dump / primer text so the fallback extractor can process it
+        yield EventActions(route="fallback")
+        return
+        
     # Check if we are resuming from the review
     interrupt_id = "setup_world_primer"
     resume_payload = ctx.resume_inputs.get(interrupt_id)
@@ -71,6 +122,6 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         return
         
     # User approved, continue the graph
-    logger.info("User approved World Primer. Transitioning to Storyteller.")
+    logger.info("User approved World Primer. Transitioning to Enrich Analyzer.")
     
-    yield Event()
+    yield EventActions(route="success")

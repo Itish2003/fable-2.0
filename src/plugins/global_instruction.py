@@ -64,6 +64,14 @@ class GlobalInstructionPlugin(BasePlugin):
                 "Focus on micro-expressions, ambient silence, and the feeling of impending conflict."
             )
             
+        # 3. Evaluate Power Level Enforcement
+        power_level = getattr(state, "power_level", "street")
+        if power_level in ["continental", "planetary"]:
+            dynamic_instructions.append(
+                "POWER SCALE NOTE: DEMONSTRATE FULL POWER AT SCALE. DO NOT artificially limit power to create challenge. "
+                "The protagonist's abilities operate on a massive scale; destruction or impact should be proportionate."
+            )
+            
         if dynamic_instructions:
             compiled_notes = "\n\n".join(dynamic_instructions)
             logger.info(f"Injecting dynamic tone instructions (Strain: {power_strain})")

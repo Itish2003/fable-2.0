@@ -19,14 +19,17 @@ interface StoryViewProps {
     isTyping: boolean;
     prose: string;
     pendingInput: RequestInputData | null;
+    choices: string[];
     loreUpdates: LoreStatus[];
     sendChoice: (msg: string) => void;
     submitInput: (txt: string) => void;
+    undoTurn: () => void;
+    canUndo: boolean;
   }
 }
 
 export default function StoryView({ story }: StoryViewProps) {
-  const { isConnected, isTyping, prose, pendingInput, loreUpdates, sendChoice, submitInput } = story;
+  const { isConnected, isTyping, prose, pendingInput, choices, loreUpdates, sendChoice, submitInput, undoTurn, canUndo } = story;
   const [inputText, setInputText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -120,27 +123,63 @@ export default function StoryView({ story }: StoryViewProps) {
 
         {/* Input Area */}
         <div className="p-6 bg-gradient-to-t from-slate-950 via-slate-950 to-transparent">
-          <div className="max-w-3xl mx-auto">
-            <form 
-              onSubmit={handleSubmit}
-              className={`relative flex items-center bg-slate-900 border rounded-xl shadow-lg transition-colors duration-200 overflow-hidden ${pendingInput ? 'border-indigo-500 ring-1 ring-indigo-500/50' : 'border-slate-700 focus-within:border-slate-500'}`}
-            >
-              <input 
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                disabled={!isConnected || (isTyping && !pendingInput)}
-                placeholder={pendingInput ? "Answer the World Builder..." : "What do you do next?"}
-                className="flex-1 bg-transparent border-none py-4 pl-5 pr-12 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-0 disabled:opacity-50"
-              />
-              <button 
-                type="submit"
-                disabled={!inputText.trim() || !isConnected || (isTyping && !pendingInput)}
-                className="absolute right-3 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+          <div className="max-w-3xl mx-auto space-y-4">
+            
+            {/* Choices Area */}
+            {choices && choices.length > 0 && !isTyping && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
+                {choices.map((choice, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                        if (pendingInput && pendingInput.interrupt_id === 'user_choice_selection') {
+                            submitInput(choice);
+                        } else {
+                            sendChoice(choice);
+                        }
+                    }}
+                    disabled={!isConnected}
+                    className="p-3 text-sm text-left bg-slate-800/80 hover:bg-indigo-600/40 border border-slate-700 rounded-lg transition-colors text-slate-200"
+                  >
+                    {choice}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center space-x-2">
+              {canUndo && !isTyping && (
+                <button
+                  onClick={undoTurn}
+                  disabled={!isConnected}
+                  className="p-4 rounded-xl bg-rose-900/30 text-rose-400 border border-rose-800/50 hover:bg-rose-900/50 hover:text-rose-300 transition-colors"
+                  title="Undo Last Turn"
+                >
+                  <ServerCrash className="w-5 h-5" />
+                </button>
+              )}
+              
+              <form 
+                onSubmit={handleSubmit}
+                className={`relative flex-1 flex items-center bg-slate-900 border rounded-xl shadow-lg transition-colors duration-200 overflow-hidden ${pendingInput ? 'border-indigo-500 ring-1 ring-indigo-500/50' : 'border-slate-700 focus-within:border-slate-500'}`}
               >
-                <Send className="w-5 h-5" />
-              </button>
-            </form>
+                <input 
+                  type="text"
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  disabled={!isConnected || (isTyping && !pendingInput)}
+                  placeholder={pendingInput ? "Answer the prompt..." : "What do you do next?"}
+                  className="flex-1 bg-transparent border-none py-4 pl-5 pr-12 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-0 disabled:opacity-50"
+                />
+                <button 
+                  type="submit"
+                  disabled={!inputText.trim() || !isConnected || (isTyping && !pendingInput)}
+                  className="absolute right-3 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       </main>

@@ -10,7 +10,13 @@ from src.nodes.world_builder import run_world_builder
 from src.nodes.recovery import run_recovery
 
 from src.nodes.init_research import create_query_planner, create_lore_hunter, parse_queries
-from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state
+from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state, create_fallback_extractor, fallback_injector
+from src.nodes.enrich_analyzer import enrich_analyzer_node
+
+# Phase 9: Narrative Intelligence Nodes
+from src.nodes.intent_router import run_intent_router
+from src.nodes.summarizer import create_summarizer, summarizer_node
+from src.nodes.choice_generator import create_choice_generator, choice_generator_node
 
 def build_fable_workflow() -> Workflow:
     """
@@ -48,6 +54,25 @@ def build_fable_workflow() -> Workflow:
     lore_keeper_node = build_node(lore_keeper_agent)
     lore_keeper_injector = inject_lore_to_state
     
+    # Fallback nodes
+    fallback_extractor_agent = create_fallback_extractor()
+    fallback_extractor_node = build_node(fallback_extractor_agent)
+    fallback_injector_node = fallback_injector
+    
+    # Enrich analyzer
+    enrich_node = enrich_analyzer_node
+    
+    # Phase 9 Nodes
+    intent_router_node = run_intent_router
+    
+    summarizer_agent = create_summarizer()
+    summarizer_agent_node = build_node(summarizer_agent)
+    summarizer_parser_node = summarizer_node
+    
+    choice_generator_agent = create_choice_generator()
+    choice_generator_agent_node = build_node(choice_generator_agent)
+    choice_generator_parser_node = choice_generator_node
+    
     # 3. Define the Graph Edges (State Machine Logic)
     
     edges = [
@@ -69,18 +94,47 @@ def build_fable_workflow() -> Workflow:
         # The Join node hands the aggregated list to the Keeper
         (swarm_join, lore_keeper_node),
         
-        # Keeper writes to state
+        # Keeper evaluates state
         (lore_keeper_node, lore_keeper_injector),
         
-        # Finally, with the State fully populated, we enter the main story loop
-        (lore_keeper_injector, storyteller_node),
+        # Fallback routing if keeper hallucinated
+        (lore_keeper_injector, {
+            "fallback": fallback_extractor_node,
+            "success": enrich_node
+        }),
+        
+        (fallback_extractor_node, fallback_injector_node),
+        (fallback_injector_node, {
+            "success": enrich_node
+        }),
+        
+        # Enrich analyzer checks for sparse state
+        (enrich_node, {
+            "enrich": query_planner_node,
+            "story": storyteller_node
+        }),
+        
+        # Intent Router decides: continue story OR branch to research swarm
+        (intent_router_node, {
+            "story": storyteller_node,
+            "research": query_planner_node
+        }),
         
         # Core Story Loop
         (storyteller_node, auditor_node),
         (auditor_node, {
             "passed": archivist_node,
             "failed": storyteller_node
-        })
+        }),
+        
+        # Narrative Intelligence: Summarize and Generate Choices
+        (archivist_node, summarizer_agent_node),
+        (summarizer_agent_node, summarizer_parser_node),
+        (summarizer_parser_node, choice_generator_agent_node),
+        (choice_generator_agent_node, choice_generator_parser_node),
+        
+        # After waiting for user input, loop back to intent router
+        (choice_generator_parser_node, intent_router_node)
     ]
     
     # 4. Create the Workflow Node
@@ -94,9 +148,17 @@ def build_fable_workflow() -> Workflow:
             swarm_join,
             lore_keeper_node,
             lore_keeper_injector,
+            fallback_extractor_node,
+            fallback_injector_node,
+            enrich_node,
+            intent_router_node,
             storyteller_node,
             auditor_node,
             archivist_node,
+            summarizer_agent_node,
+            summarizer_parser_node,
+            choice_generator_agent_node,
+            choice_generator_parser_node,
             recovery_node
         ],
         edges=edges

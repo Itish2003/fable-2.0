@@ -119,7 +119,8 @@ async def execute_adk_turn(
                     
         # When generator is exhausted
         await manager.send_personal_message({
-            "type": "turn_complete"
+            "type": "turn_complete",
+            "invocation_id": run_kwargs["invocation_id"]
         }, session_id)
         
     except Exception as e:

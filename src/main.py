@@ -71,7 +71,25 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             # Wait for client messages
             data = await websocket.receive_json()
             
-            # Extract routing info
+            # 1. Handle Undo / Rewind Action
+            if data.get("action") == "undo":
+                invocation_id = data.get("invocation_id")
+                if invocation_id:
+                    logger.info(f"Rewinding session {session_id} before invocation {invocation_id}")
+                    try:
+                        from src.app_container import fable_runner
+                        await fable_runner.rewind_async(
+                            user_id="local_tester",
+                            session_id=session_id,
+                            rewind_before_invocation_id=invocation_id
+                        )
+                        await manager.send_personal_message({"type": "undo_complete"}, session_id)
+                    except Exception as e:
+                        logger.error(f"Failed to rewind: {e}")
+                        await manager.send_personal_message({"type": "error", "message": "Rewind failed."}, session_id)
+                continue
+            
+            # Extract routing info for normal turns
             interrupt_id = data.get("interrupt_id")
             resume_payload = data.get("resume_payload")
             message_text = data.get("message")

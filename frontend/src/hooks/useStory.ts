@@ -22,8 +22,10 @@ export function useStory() {
   
   const [prose, setProse] = useState<string>('');
   const [pendingInput, setPendingInput] = useState<RequestInputData | null>(null);
+  const [choices, setChoices] = useState<string[]>([]);
   const [loreUpdates, setLoreUpdates] = useState<LoreStatus[]>([]);
   const [setupComplete, setSetupComplete] = useState(false);
+  const [invocationHistory, setInvocationHistory] = useState<string[]>([]);
   
   const wsRef = useRef<WebSocket | null>(null);
   const loreIdRef = useRef(0);
@@ -77,8 +79,20 @@ export function useStory() {
               interrupt_id: data.interrupt_id,
               message: data.message
             });
+            
+            if (data.interrupt_id === 'user_choice_selection') {
+                try {
+                    const parsed = JSON.parse(data.message);
+                    setChoices(parsed.choices || []);
+                } catch (e) {
+                    setChoices([]);
+                }
+            } else {
+                setChoices([]);
+            }
+            
             // Ensure prose has a clean break before the prompt
-            if (data.interrupt_id !== 'setup_lore_dump' && data.interrupt_id !== 'setup_configuration' && data.interrupt_id !== 'setup_world_primer') {
+            if (data.interrupt_id !== 'setup_lore_dump' && data.interrupt_id !== 'setup_configuration' && data.interrupt_id !== 'setup_world_primer' && data.interrupt_id !== 'user_choice_selection') {
                 setProse(prev => prev + `\n\n> *${data.message}*\n\n`);
             }
             break;
@@ -94,6 +108,18 @@ export function useStory() {
           case 'turn_complete':
             setIsTyping(false);
             setProse(prev => prev + '\n\n');
+            if (data.invocation_id) {
+                setInvocationHistory(prev => [...prev, data.invocation_id]);
+            }
+            break;
+            
+          case 'undo_complete':
+            setIsTyping(false);
+            setProse(prev => prev + '\n\n**[System]**: Timeline rewind successful. Awaiting new input...\n\n');
+            // Remove the last invocation since it was undone
+            setInvocationHistory(prev => prev.slice(0, -1));
+            setPendingInput(null);
+            setChoices([]);
             break;
             
           case 'error':
@@ -152,15 +178,34 @@ export function useStory() {
     setPendingInput(null);
   }, [pendingInput]);
 
+  const undoTurn = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (invocationHistory.length === 0) return;
+    
+    // We want to rewind BEFORE the last turn
+    const lastInvocation = invocationHistory[invocationHistory.length - 1];
+    
+    setIsTyping(true);
+    setProse(prev => prev + `\n\n**[System]**: Initiating timeline rewind...\n\n`);
+    
+    wsRef.current.send(JSON.stringify({
+      action: 'undo',
+      invocation_id: lastInvocation
+    }));
+  }, [invocationHistory]);
+
   return {
     isConnected,
     isTyping,
     isResearching,
     prose,
     pendingInput,
+    choices,
     loreUpdates,
     setupComplete,
     sendChoice,
-    submitInput
+    submitInput,
+    undoTurn,
+    canUndo: invocationHistory.length > 0
   };
 }

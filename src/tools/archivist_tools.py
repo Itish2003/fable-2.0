@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from src.state.models import FableAgentState, CharacterState, DivergenceRecord
 from src.database import AsyncSessionLocal
 from src.state.lore_models import LoreNode, LoreEdge
+from src.utils.sanitizer import sanitize_context
 
 from google.adk.tools.tool_context import ToolContext
 
@@ -29,6 +30,11 @@ async def update_relationship(
     """
     # Load state from ctx.state (the global narrative state dict)
     state = FableAgentState(**{k: tool_context.state[k] for k in tool_context.state._value.keys() | tool_context.state._delta.keys()})
+    
+    # Sanitize inputs
+    target_name = sanitize_context(target_name)
+    disposition = sanitize_context(disposition)
+    dynamic_tags = [sanitize_context(tag) for tag in dynamic_tags]
     
     if target_name not in state.active_characters:
         # If they aren't in the active state yet, initialize them
@@ -80,6 +86,11 @@ async def record_divergence(
     """
     state = FableAgentState(**{k: tool_context.state[k] for k in tool_context.state._value.keys() | tool_context.state._delta.keys()})
     
+    # Sanitize inputs
+    canon_event_id = sanitize_context(canon_event_id)
+    description = sanitize_context(description)
+    ripple_effects = [sanitize_context(effect) for effect in ripple_effects]
+    
     new_divergence = DivergenceRecord(
         event_id=canon_event_id,
         description=description,
@@ -102,6 +113,8 @@ async def track_power_strain(
         strain_increase: The amount of strain added (1-100). Heavy magic should cost more.
     """
     state = FableAgentState(**{k: tool_context.state[k] for k in tool_context.state._value.keys() | tool_context.state._delta.keys()})
+    
+    power_used = sanitize_context(power_used)
     
     if strain_increase <= 0:
         return "No significant strain detected."
@@ -131,6 +144,10 @@ async def advance_timeline(
         event_description: A brief summary of what happened during the time skip.
     """
     state = FableAgentState(**{k: tool_context.state[k] for k in tool_context.state._value.keys() | tool_context.state._delta.keys()})
+    
+    new_date = sanitize_context(new_date)
+    event_description = sanitize_context(event_description)
+    
     state.current_timeline_date = new_date
     tool_context.state["current_timeline_date"] = new_date
     return f"Timeline advanced to {new_date}."

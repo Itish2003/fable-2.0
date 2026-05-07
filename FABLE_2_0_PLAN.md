@@ -1,9 +1,9 @@
 # Fable 2.0: Uncompromised Architectural Masterplan
 
 ## Executive Summary
-Fable 2.0 is a complete departure from the "Manual JSON Orchestration" of V1. It is a pure-native implementation built on the **ADK 2.0 Beta** framework, leveraging its most advanced primitives: **Graph-Based Workflows**, **Node Isolation**, **VertexAI GraphRAG**, and **Native Telemetry**. 
+Fable 2.0 is a complete departure from the "Manual JSON Orchestration" of V1. It is a pure-native implementation built on the **ADK 2.0 Beta** framework, leveraging its most advanced primitives: **Graph-Based Workflows**, **Node Isolation**, **GraphRAG over local Postgres + pgvector + Ollama**, and **Native Telemetry**.
 
-This plan assumes a **Clean Slate Strategy**: We are discarding all V1 story data and backward compatibility requirements to ensure the V2 implementation is 100% optimized for performance, scalability, and narrative integrity.
+This plan assumes a **Clean Slate Strategy**: V1 story data and backward-compatibility requirements were discarded so the V2 implementation could be optimized for performance, scalability, and narrative integrity from the ground up.
 
 ---
 
@@ -68,21 +68,21 @@ Fable 2.0 moves from programmatic Python loops to a formal state machine using `
 
 ## 3. The Lore Engine: GraphRAG & Primary Source Ingestion
 
-We are replacing the flat `world_bible.json` with a **Dynamic Knowledge Graph** (NetworkX/Vector-backed) integrated via the `VertexAiRagMemoryService`.
+We replace the flat `world_bible.json` with a **Dynamic Knowledge Graph** backed by Postgres + `pgvector` and exposed through a custom `FableLocalMemoryService` that subclasses ADK's `BaseMemoryService`. The local stack was chosen over `VertexAiRagMemoryService` to keep development friction low, run fully offline (no Vertex API quota), and use Ollama-hosted `nomic-embed-text:v1.5` embeddings — migration to Vertex remains trivial because the service interface is matched.
 
 ### Primary Source Ingestion (Bypassing Surface-Level AI)
 *   **The V1 Masterstroke:** V1 history shows a reliance on raw Light Novel manuscripts (Volumes 1-8). 
-*   **The V2 ETL Pipeline (`LoreIngestionNode`):** Upgraded to an asynchronous ETL worker. This node ingests massive, raw manuscript volumes (50k-90k words each), chunks them, and embeds them directly into the GraphRAG Vector DB via `VertexAiMemoryBankService`, ensuring the `LoreHunterNode` queries the actual books, not Wikipedia.
+*   **The V2 ETL Pipeline (`LoreIngestionNode`):** Asynchronous ETL worker that ingests raw manuscript volumes (50k-90k words each), chunks them, and embeds them via Ollama into Postgres+pgvector in parallel batches (`asyncio.gather` + per-batch commits — a transient embedding failure mid-volume doesn't abort persisted progress). The `LoreHunterNode` then queries the actual books, not Wikipedia.
 
 ### Context Engineering via Subgraph Injection
 *   **The Radius Pattern:** Instead of injecting the whole Bible, the `MemoryService` performs a graph traversal from the scene's focus node.
-*   **Epistemic Filtering (Replacing `fk_detector.py`):** Graph edges contain "visibility" weights. The injection engine *physically cannot* pull lore nodes that are hidden from the current POV character, rendering "Soft Forbidden Knowledge" leaks impossible.
+*   **Epistemic Filtering (Replacing `fk_detector.py`):** Two-layer enforcement. (1) `memory_service.search_memory` filters retrieval against `state.forbidden_concepts` *before* the LLM sees results. (2) The `AuditorNode` substring-checks generated prose as a fallback. `LoreEdge.visibility_whitelist` carries the per-edge POV gate; `update_relationship` writes `["PROTAGONIST", target_name]` so private edges only resolve for those endpoints during graph traversal.
 
 ---
 
 ## 4. The ADK 2.0 Tool Belt (State Mutation)
 
-The `ArchivistNode` strictly mutates the Pydantic `AgentState` using these core tools. Because it uses `PlanReActPlanner(tool_choice="any")`, it is mathematically forced to output valid schema.
+The `ArchivistNode` strictly mutates the Pydantic `AgentState` using these core tools. The agent attaches `PlanReActPlanner()` (chain-of-thought tool routing) plus `GenerateContentConfig(tool_config=ToolConfig(function_calling_config=FunctionCallingConfig(mode='ANY')))` — `mode='ANY'` is the actual lever that forces the model to emit a tool call every turn, guaranteeing valid schema. *(Earlier drafts of this plan referenced a `tool_choice="any"` kwarg on the planner; that kwarg does not exist on `PlanReActPlanner` and was a documentation bug.)*
 
 | Tool Name | Parameters | Impact |
 | :--- | :--- | :--- |
@@ -113,16 +113,18 @@ ADK 2.0 exposes native `usage_metadata` within its `LlmResponse` events (via the
 
 ---
 
-## 4. Native ADK 2.0 Beta Superpowers
+## 6. Native ADK 2.0 Beta Superpowers (Aspirational — Not Yet Wired)
 
-Based on an audit of the `google.adk` source code, we are activating these "hidden" beta features:
+These ADK Beta features were identified in the source-code audit. They remain **aspirational**; nothing under this section is currently active in the runtime. Tagged honestly so the plan doesn't drift from reality.
 
-### A. Automated Evaluation & Optimization (GEPA)
+### A. Automated Evaluation & Optimization (GEPA) — *aspirational*
 *   **The Feature:** `google.adk.optimization.GEPARootAgentPromptOptimizer`.
-*   **The Implementation:** We will define an `EvalSet` of "Perfect Chapters" from V1. Fable 2.0 will use GEPA to automatically refine the `StorytellerNode` system instructions to match your preferred prose style, replacing monolithic V1 manual prompt engineering.
+*   **The Plan:** Define an `EvalSet` of "Perfect Chapters" from V1. Fable 2.0 *would* use GEPA to automatically refine the `StorytellerNode` system instructions to match a preferred prose style, replacing monolithic V1 manual prompt engineering.
+*   **Status:** Not implemented. No `EvalSet` exists; no GEPA optimizer is attached to any agent.
 
-### B. Native Tool Retries (`ReflectAndRetryToolPlugin`)
-*   **The Upgrade:** Replaces the manual "fix: enforce tool calls" logic in V1. If an agent fails a tool call, the framework automatically reflects on the error and retries the call *internally* before the graph continues.
+### B. Native Tool Retries (`ReflectAndRetryToolPlugin`) — *aspirational*
+*   **The Upgrade:** Would replace the manual "fix: enforce tool calls" logic in V1. If an agent failed a tool call, the framework would automatically reflect on the error and retry internally before the graph continues.
+*   **Status:** Not wired. Current resilience comes from the auditor's retry counter (3 failures → `recovery_node`), not from tool-level retries.
 
 ---
 
@@ -166,12 +168,45 @@ Fable 2.0 is built on the engineering philosophy extracted from the **ADK 2.0 Be
 11. **Phase 11: The Rewrite Feature** (DONE)
     *   Expose native `rewind_async` functionality to the UI.
     *   Inject [SYSTEM REWRITE CONSTRAINT] via `new_message` to steer Storyteller.
-12. **Phase 12: Enhanced Suspicion Engine** (PENDING)
-    *   Implement semantic "Secret Proximity" detection using local embeddings.
-    *   Implement "Suspicion Protocol" callback to force Awareness-Spectrum choices.
-    *   Update `ChoiceGenerator` to support tiered narrative branching.
+12. **Phase 12: Enhanced Suspicion Engine** (DONE)
+    *   Semantic "Secret Proximity" detection via local Ollama embeddings + cosine similarity (`>0.78`).
+    *   "Suspicion Protocol" preamble injected via `before_model_callback` (not `before_agent_callback` — that hook *replaces* agent output instead of steering it; an early implementation tripped this and Phase 12 silently never fired).
+    *   `ChoiceGenerator` emits `{prompt, choices: [{text, tier}]}` with `tier ∈ {null, oblivious, uneasy, suspicious, breakthrough}`; UI renders tier-coded buttons (slate / amber / orange / rose-pulse).
+13. **Phase 13: ADK 2.0 Native Alignment & UI State Surface** (DONE)
+    *   Replaced reinvented plugins with ADK's bundled `GlobalInstructionPlugin` + `LoggingPlugin`.
+    *   Attached `state_schema=FableAgentState`; consumers use `ctx.state.to_dict()` instead of private `_value`/`_delta`.
+    *   Public `google.adk.workflow` imports; `recovery_node` reachable; auditor retry counter (`temp:audit_retries`).
+    *   New `state_update` WS event surfaces strain, cast, divergences, mood, chapter, location, timeline_date.
+    *   `update_relationship` persists significant trust shifts (`|trust_delta| >= 20`) as `LoreEdge` rows with `visibility_whitelist=[PROTAGONIST, target]`.
+    *   `commit_lore` and `report_violation` tools complete the 6-tool belt.
+    *   Lore ingestion: `asyncio.gather` parallel embeddings + per-batch SQL commits.
+
+---
+
+## 10. Verification Status
+
+This plan historically over-promised on what was "verified." Below is the honest map of what's been probed end-to-end vs. implemented but unprobed:
+
+| Claim | Status | Notes |
+|---|---|---|
+| Workflow graph constructs (20 nodes, `state_schema=FableAgentState`) | ✅ Probed | Smoke test imports `build_fable_workflow()` and asserts node count + schema attachment. |
+| Compaction summarizer doesn't crash on `Workflow` root | ✅ Probed | Explicit `LlmEventSummarizer(llm=Gemini(...))` passed; no fallback to the broken `_ensure_compaction_summarizer`. |
+| Archivist has `PlanReActPlanner` + `mode='ANY'` + 6 tools | ✅ Probed | Smoke test asserts all three. |
+| `state_update` WS payload matches contract | ✅ Probed | Frontend discriminated union + `assertNever` exhaustiveness check. |
+| Suspicion plugin actually fires when similarity > 0.78 | ⚠️ Implemented, unprobed end-to-end | Hook + state-access bugs fixed; no automated test asserts the LLM receives the "SUSPICION PROTOCOL" preamble on a controlled input. |
+| Epistemic filter active in `search_memory` | ⚠️ Implemented, unprobed | Code path exists; no integration test confirms forbidden concepts are dropped from retrieval. |
+| `LoreEdge` upserts on significant trust shifts | ⚠️ Implemented, unprobed | Code present; no test asserts a row appears in `lore_edges`. |
+| Recovery routing after 3 auditor failures | ⚠️ Implemented, unprobed | Counter logic exists; no test forces 3 failures end-to-end. |
+| Lore ingestion parallel batches survive Ollama 503 | ⚠️ Implemented, unprobed | `return_exceptions=True` in place; no chaos test. |
+| HITL `rerun_on_resume=True` survives RequestInput round-trip | ⚠️ Implemented, unprobed | Decorator set; no test exercises a full setup-resume cycle. |
+| GEPA prompt optimization | ❌ Not implemented | See §6.A. |
+| `ReflectAndRetryToolPlugin` | ❌ Not implemented | See §6.B. |
+
+**Convention:** ✅ = at least one programmatic probe asserts the claim; ⚠️ = code in place, looks correct, no automated test exercising it; ❌ = not built.
+
+**Honest reading:** ~30% of the architecture is verified end-to-end; ~60% is implemented-but-unprobed; ~10% is aspirational. The next investment that pays off most is a `tests/` smoke harness with one integration test per ⚠️ row.
 
 ---
 
 ## Conclusion
-By leveraging ADK 2.0's deterministic graphs, node isolation, memory services, and native telemetry, Fable 2.0 is a next-generation **simulation-grade narrative engine**. The architecture is 100% complete, unabridged, programmatically verified, and ready for code.
+By leveraging ADK 2.0's deterministic graphs, node isolation, memory services, and native telemetry, Fable 2.0 is a next-generation **simulation-grade narrative engine**. Phases 1–13 are implemented and end-to-end smoke-tested at the import level; advanced ADK Beta features (GEPA, `ReflectAndRetryToolPlugin`) remain aspirational and are tagged as such above. See §10 for the verification map separating probed claims from implemented-but-unprobed ones.

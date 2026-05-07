@@ -19,6 +19,14 @@ It acts as an uncompromising AI Game Master, utilizing a multi-agent tool-callin
 
 ---
 
+## ✨ What's New (Phases 12 + 13)
+
+**Phase 12 — Suspicion Engine (Live):** The semantic dramatic-irony detector now actually fires. When generated prose embeds within cosine `0.78` of a hidden forbidden concept, the choice generator's system prompt is steered (via `before_model_callback`) into a 4-tier output `{text, tier}` where `tier ∈ {oblivious, uneasy, suspicious, breakthrough}`. The UI renders these as **slate / amber / orange / rose-pulse** buttons. *Earlier hook misuse + a state-access typo had silently masked Phase 12 from ever firing — both fixed.*
+
+**Phase 13 — ADK Native Alignment & UI State Surface:** Major realignment to ADK 2.0 public APIs. Replaced reinvented plugins with bundled `GlobalInstructionPlugin` + `LoggingPlugin`, attached `state_schema=FableAgentState`, switched to `ctx.state.to_dict()` over private `_value`/`_delta`, made the recovery node reachable, and wired `LoreEdge` upserts on significant trust shifts. New `state_update` WebSocket event surfaces strain, cast, divergences, mood, chapter, and timeline date — the React UI now renders a **strain bar** (red-pulse when `>80`), a **tabbed sidebar** (Lore / Cast / Divergences), an **inline rewrite modal** with quick-pick chips, and a **header info row**. See [`FABLE_2_0_PLAN.md`](FABLE_2_0_PLAN.md) §10 for the verification status map and [`CHANGELOG.md`](CHANGELOG.md) for the full diff.
+
+---
+
 ## 🏗️ Tech Stack
 
 *   **Framework:** Google ADK 2.0 Beta (`google.adk`)
@@ -39,10 +47,20 @@ It acts as an uncompromising AI Game Master, utilizing a multi-agent tool-callin
 - `uv` (Fast Python package installer)
 
 ### 2. Environment Configuration
-Clone the repository and create an environment file at the root:
+
+**Backend** — at the project root (`.env`):
 ```bash
 echo "GEMINI_API_KEY=your_google_ai_studio_key" > .env
 ```
+The Gemini key powers the Storyteller, Archivist, and the explicit `LlmEventSummarizer` used by ADK's `EventsCompactionConfig`. The summarizer must be passed explicitly because Fable's `root_agent` is a `Workflow`, not an `LlmAgent` — ADK's `_ensure_compaction_summarizer` can't auto-instantiate one in that case.
+
+**Frontend** — optional, at `frontend/.env.local`:
+```bash
+# Defaults if unset
+VITE_API_BASE=http://localhost:8001
+VITE_WS_BASE=ws://localhost:8001
+```
+The frontend exposes these as `import.meta.env.VITE_*`. Useful when you deploy the backend to a non-localhost URL.
 
 ### 3. Database Initialization
 Ensure your local PostgreSQL server is running, then create the database and extension:

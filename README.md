@@ -61,17 +61,17 @@ The backend is a FastAPI application that drives the ADK state machine.
 ### 2. Start the Frontend (React UI)
 The frontend is a Vite-based React app that connects to the engine via WebSockets.
 *   **Location:** `/Users/itish/Downloads/fable2.0/frontend`
-*   **Port:** 5174 (default Vite port)
+*   **Port:** 5173 (default Vite port)
 *   **Command:**
     ```bash
     cd frontend
     npm run dev
     ```
 
-Once both are running, open your browser to **http://localhost:5174**. The UI will automatically create a session and trigger the initial **World Builder** setup wizard.
+Once both are running, open your browser to **http://localhost:5173**. The UI will automatically create a session and trigger the initial **World Builder** setup wizard.
 
 ## Development Phases
-This project was strictly implemented across 7 phases:
+This project was strictly implemented across 9 distinct phases:
 1. `PHASE_1_STATE_MODEL`: Pydantic Models & Session Manager
 2. `PHASE_2_GRAPHRAG`: Postgres, pgvector & Local Ollama Embeddings
 3. `PHASE_3_NODE_CONFIG`: Agent wrapping & strict Tool execution
@@ -79,3 +79,5 @@ This project was strictly implemented across 7 phases:
 5. `PHASE_5_WORLD_BOOT`: Interactive `RequestInput` World Building
 6. `PHASE_6_SERVER_INTEGRATION`: FastAPI & WebSocket Runner Loop
 7. `PHASE_7_PRODUCTIONIZATION`: Telemetry, Context Compaction & Error Recovery
+8. `PHASE_8_DYNAMIC_INIT`: ADK native `parallel_worker=True` Research Swarm using `GoogleSearchTool`.
+9. `PHASE_9_NARRATIVE_INTELLIGENCE`: Native `rewind_async` UI, Rolling Context Summarization, and Choice Generation.

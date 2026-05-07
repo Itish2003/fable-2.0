@@ -85,7 +85,7 @@ async def execute_adk_turn(
                     "interrupt_id": req_interrupt_id,
                     "message": req_message,
                 }, session_id)
-                break
+                continue
                 
             # 4. Handle Standard Events (Node Output)
             if hasattr(event, "content") and event.content and event.content.parts:

@@ -1,15 +1,44 @@
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Optional
 
+from google.adk.agents.callback_context import CallbackContext
 from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events import Event
 from google.adk.agents.llm_agent import LlmAgent
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from src.state.models import FableAgentState
 
 logger = logging.getLogger("fable.summarizer")
+
+
+async def _inject_chapter_for_summary(
+    callback_context: CallbackContext,
+    llm_request: LlmRequest,
+) -> Optional[LlmResponse]:
+    """Inject the chapter prose into the summarizer's instruction.
+
+    Same rationale as the archivist's callback: the previous node
+    (archivist) emits a tool-laden event whose final text is just a
+    confirmation, not the chapter. Reading state.last_story_text and
+    appending it ensures the summarizer summarises the actual prose.
+    """
+    state = callback_context.state
+    story_text = (state.get("last_story_text") or "").strip()
+    if not story_text:
+        return None
+    if len(story_text) > 24000:
+        story_text = "...(truncated; latest scenes follow)\n\n" + story_text[-24000:]
+    payload = (
+        "──── CHAPTER TO SUMMARISE ────\n"
+        + story_text
+        + "\n──── END CHAPTER ────"
+    )
+    llm_request.append_instructions([payload])
+    return None
 
 
 def create_summarizer() -> LlmAgent:
@@ -19,10 +48,13 @@ def create_summarizer() -> LlmAgent:
         model="gemini-3.1-flash-lite",
         instruction="""
         You are a Narrative Summarizer.
-        Read the provided story chapter and summarize its key events in exactly 2 concise sentences.
-        Focus on major plot movements, character decisions, or consequences.
-        Do not add any conversational text.
+        Read the chapter prose injected into your context and summarize its
+        key events in exactly 2 concise sentences. Focus on major plot
+        movements, character decisions, and consequences. Do not add any
+        conversational text. Do not refer to chapters that aren't in the
+        provided text.
         """,
+        before_model_callback=_inject_chapter_for_summary,
     )
 
 

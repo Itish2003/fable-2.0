@@ -50,18 +50,58 @@ async def _cap_archivist_tools(
     args: dict[str, Any],
     tool_context: ToolContext,
 ) -> Optional[dict]:
-    """before_tool_callback: enforce per-chapter tool-call caps.
+    """before_tool_callback: enforce per-tool AND global tool-call caps.
 
     Returning a non-None dict short-circuits the actual tool call and
-    uses the dict as the tool's response. The model sees the synthetic
-    "capped" response and stops calling that tool.
+    uses the dict as the tool's response.
+
+    Two enforcement layers:
+      1. Per-tool cap: synthetic "capped" response. The model may still
+         try OTHER tools.
+      2. Global budget: synthetic response PLUS
+         ``tool_context.actions.escalate = True``. ADK's LlmAgent run
+         loop terminates the agent on the next event when escalate is
+         set, so the archivist exits immediately without another LLM
+         round-trip.
     """
+    counts: dict = dict(tool_context.state.get(_COUNTER_KEY) or {})
+    total = sum(int(v or 0) for v in counts.values())
+
+    # 1. Global hard-stop: terminate the LlmAgent's tool loop.
+    # base_llm_flow.run_async breaks out of the while-loop once
+    # last_event.is_final_response() returns True. By default an event
+    # carrying a function_response is NOT final — the model gets another
+    # turn. Setting skip_summarization=True makes is_final_response()
+    # short-circuit to True for this event, so the flow exits without
+    # another LLM round-trip. escalate=True additionally signals any
+    # parent LoopAgent to stop iterating. Both flags together mirror
+    # the canonical google.adk.tools.exit_loop_tool implementation.
+    if total >= _ARCHIVIST_TOTAL_CALL_BUDGET:
+        tool_context.actions.escalate = True
+        tool_context.actions.skip_summarization = True
+        logger.warning(
+            "archivist: global budget exhausted (%d >= %d); escalate + "
+            "skip_summarization set to terminate LlmAgent flow.",
+            total, _ARCHIVIST_TOTAL_CALL_BUDGET,
+        )
+        return {
+            "capped": True,
+            "reason": "global_budget_exhausted",
+            "total_calls": total,
+            "budget": _ARCHIVIST_TOTAL_CALL_BUDGET,
+            "message": (
+                f"Global tool-call budget exhausted ({total} calls this "
+                f"chapter, cap={_ARCHIVIST_TOTAL_CALL_BUDGET}). Archivist "
+                f"is terminating."
+            ),
+        }
+
+    # 2. Per-tool cap.
     name = tool.name
     cap = _ARCHIVIST_TOOL_CAPS.get(name)
     if cap is None:
         return None  # uncapped tool; let it through
 
-    counts: dict = dict(tool_context.state.get(_COUNTER_KEY) or {})
     used = int(counts.get(name, 0))
     if used >= cap:
         logger.warning(
@@ -93,33 +133,44 @@ def reset_archivist_counters(state: Any) -> None:
         pass
 
 
+# Hard global budget for archivist tool calls per chapter. Even if every
+# per-tool cap is respected, the sum across tools (8+6+6+5+4+3+3+...) can
+# still loop because each per-tool short-circuit is a synthetic
+# function_response the model treats as a normal result and uses to
+# justify trying ANOTHER tool. When this total trips, the
+# before_tool_callback sets ``actions.escalate = True`` which is ADK's
+# framework-native signal for an LlmAgent to exit its tool loop — no
+# extra LLM round-trip needed.
+_ARCHIVIST_TOTAL_CALL_BUDGET = 25
+
+
 async def _inject_chapter_prose(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
 ) -> Optional[LlmResponse]:
-    """Inject the chapter prose into the archivist's system instruction.
+    """Inject the chapter prose so the archivist has text to analyze.
 
-    The auditor yields a route-only event (no Content) before this agent
-    runs, so node_input is empty. Without this callback the archivist
-    would receive only its instruction and the previous LLM trace —
-    nothing to actually analyze. Reading state.last_story_text and
-    appending it as an instruction block gives the archivist concrete
-    text to extract state changes from.
+    The auditor yields a route-only event, so node_input is otherwise
+    empty; we read ``state.last_story_text`` and append it as an
+    instruction. Global budget enforcement lives in
+    ``_cap_archivist_tools`` (escalate path), not here.
     """
     state = callback_context.state
     story_text = (state.get("last_story_text") or "").strip()
     if not story_text:
         return None
-    # Cap at ~24KB so we don't dwarf the agent's instruction; chapters at
-    # the 8k-word target are ~50KB, so we trim to the last ~5k words —
-    # the most-recent prose is what matters for state extraction.
     if len(story_text) > 24000:
         story_text = "...(truncated; latest scenes follow)\n\n" + story_text[-24000:]
+    counts = state.get(_COUNTER_KEY) or {}
+    total_calls = sum(int(v or 0) for v in counts.values()) if isinstance(counts, dict) else 0
     payload = (
         "──── CHAPTER TO ANALYZE ────\n"
         + story_text
         + "\n──── END CHAPTER ────\n\n"
-        "Extract every state change implied by this chapter via your tools."
+        "Extract every state change implied by this chapter via your tools. "
+        f"Hard budget: {_ARCHIVIST_TOTAL_CALL_BUDGET} tool calls TOTAL across "
+        f"all tools this chapter (currently used: {total_calls}). When done, "
+        "emit a one-sentence confirmation."
     )
     llm_request.append_instructions([payload])
     return None

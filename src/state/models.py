@@ -174,6 +174,15 @@ class FableAgentState(BaseModel):
         default_factory=list,
         description="Story universes (e.g. 'Jujutsu Kaisen', 'The Irregular at Magic High School'). Populated by lore_keeper from research summaries.",
     )
+    # Phase G+: per-session sentinel for the protagonist's LoreNode.
+    # Written once by world_builder at story init as
+    # 'PROTAGONIST::<uuid4hex>' so each story owns a unique node and
+    # update_relationship's edges don't bleed across sessions. Read by
+    # archivist_tools._protagonist_name(state).
+    protagonist_node_name: Optional[str] = Field(
+        default=None,
+        description="Per-session 'PROTAGONIST::<uuid>' sentinel; isolates story-specific LoreEdges in the GraphRAG store.",
+    )
 
     # Auditor violation history (written by the report_violation tool)
     violation_log: List[Dict[str, Any]] = Field(default_factory=list, description="Audit trail of canon/tone violations flagged during play.")

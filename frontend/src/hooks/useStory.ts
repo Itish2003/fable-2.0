@@ -114,7 +114,8 @@ export type WsMessage =
   | { type: 'error'; message: string; kind?: 'session_not_found' | 'timeout' | string }
   | { type: 'undo_complete' }
   | { type: 'rewrite_started' }
-  | { type: 'state_update'; data: StoryStateData };
+  | { type: 'state_update'; data: StoryStateData }
+  | { type: 'chapter_meta'; data: ChapterMetaData };
 
 // Exhaustiveness helper: the never-check fallthrough surfaces unhandled
 // message types as TypeScript errors at compile time.
@@ -295,6 +296,24 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           setStoryState(data.data);
           break;
 
+        case 'chapter_meta': {
+          // Option A: chapter completed; render typed choices + meta-questions.
+          // The data shape mirrors ChapterOutput (Pydantic) from src/state/chapter_output.py.
+          setIsTyping(false);
+          setIsResearching(false);
+          const meta = data.data;
+          const choicesIn = Array.isArray(meta.choices) ? meta.choices : [];
+          const normalized: Choice[] = choicesIn.map((c) => ({
+            text: String(c.text ?? ''),
+            tier: c.tier,
+            tied_event: c.tied_event ?? null,
+          }));
+          setChoices(normalized);
+          setChoicePrompt('');
+          setPendingQuestions(Array.isArray(meta.questions) ? meta.questions : []);
+          break;
+        }
+
         default:
           // Compile-time exhaustiveness: a future backend type that's not in
           // the WsMessage union will surface here as a TS error.
@@ -357,13 +376,28 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
   }, [sessionId]);
 
   // 3. User Actions
-  const sendChoice = useCallback((message: string) => {
+  const sendChoice = useCallback((
+    message: string,
+    questionAnswers?: Record<string, string>,
+  ) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
     setProseAndFragment('system', `\n**[Action]**: ${message}\n\n`);
     setIsTyping(true);
 
-    wsRef.current.send(JSON.stringify({ message }));
+    // Option A: chapter choice goes as plain message (NOT a function_response
+    // wrapper) so the runner gets a fresh invocation_id per chapter. Bundle
+    // the meta-question answers if present.
+    const payload: Record<string, unknown> = { message };
+    if (questionAnswers && Object.keys(questionAnswers).length > 0) {
+      payload.question_answers = questionAnswers;
+    }
+    wsRef.current.send(JSON.stringify(payload));
+
+    // Clear local choice state so the picker disappears while the next
+    // chapter is generating.
+    setChoices([]);
+    setPendingQuestions([]);
   }, [setProseAndFragment]);
 
   const submitInput = useCallback((

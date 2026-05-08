@@ -41,7 +41,7 @@ interface StoryViewProps {
     pendingQuestions: ChapterQuestion[];
     loreUpdates: LoreStatus[];
     storyState: StoryStateData | null;
-    sendChoice: (msg: string) => void;
+    sendChoice: (msg: string, questionAnswers?: Record<string, string>) => void;
     submitInput: (
       payload: string | { choice: string; question_answers?: Record<string, string> },
     ) => void;
@@ -386,14 +386,10 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
                     choice={choice}
                     disabled={!isConnected || !allQuestionsAnswered}
                     onClick={() => {
-                      if (pendingInput && pendingInput.interrupt_id === 'user_choice_selection') {
-                        submitInput({
-                          choice: choice.text,
-                          question_answers: questionAnswers,
-                        });
-                      } else {
-                        sendChoice(choice.text);
-                      }
+                      // Option A: chapter choices ALWAYS go through sendChoice
+                      // (plain message, fresh invocation_id). question_answers
+                      // is bundled when the meta-questions panel was rendered.
+                      sendChoice(choice.text, questionAnswers);
                     }}
                   />
                 ))}

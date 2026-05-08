@@ -354,14 +354,15 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             interrupt_id = data.get("interrupt_id")
             resume_payload = data.get("resume_payload")
             message_text = data.get("message")
-            
-            # Fire and forget the ADK execution turn
+            question_answers = data.get("question_answers")  # Option A: chapter-choice payload
+
             task = asyncio.create_task(
                 execute_adk_turn(
                     session_id=session_id,
                     message_text=message_text,
                     resume_payload=resume_payload,
-                    interrupt_id=interrupt_id
+                    interrupt_id=interrupt_id,
+                    question_answers=question_answers,
                 )
             )
             manager.register_task(session_id, task)

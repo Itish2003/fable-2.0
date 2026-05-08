@@ -16,7 +16,6 @@ from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state, crea
 # Phase 9: Narrative Intelligence Nodes
 from src.nodes.intent_router import run_intent_router
 from src.nodes.summarizer import summarizer_node
-from src.nodes.user_choice_input import user_choice_input_node
 
 
 def build_fable_workflow() -> Workflow:
@@ -68,12 +67,13 @@ def build_fable_workflow() -> Workflow:
     # so the shim agent is gone. archivist_node -> summarizer_node directly.
     summarizer_parser_node = summarizer_node
 
-    # Phase B: choice_generator removed -- the storyteller already emits
-    # 4 typed choices (canon/divergence/character/wildcard) in its
-    # ChapterOutput JSON tail. user_choice_input_node reads
-    # state.last_chapter_meta (written by the auditor) and surfaces those
-    # choices via a single user_choice_selection HITL.
-    user_choice_node = user_choice_input_node
+    # Phase B (Option A): user_choice_input removed entirely. The
+    # workflow terminates after summarizer; the WS runner emits a
+    # chapter_meta frame carrying state.last_chapter_meta. The frontend
+    # renders the picker WITHOUT a HITL pause. Each user choice triggers
+    # a fresh runner.run_async(new_message=Content(...), state_delta={...})
+    # which gets a NEW invocation_id -- so per-chapter rewind/rewrite
+    # finally works.
 
     # 3. Define the Graph Edges (State Machine Logic)
 
@@ -81,8 +81,16 @@ def build_fable_workflow() -> Workflow:
         # Boot Phase (HITL)
         (START, world_builder_node),
 
-        # After WorldBuilder completes, trigger the Query Planner
-        (world_builder_node, query_planner_node),
+        # WorldBuilder routes:
+        #   setup -> query_planner (first run; runs lore_dump+wizard+config+research swarm)
+        #   skip  -> intent_router (subsequent chapters; world is already built)
+        # The skip route is what makes Option A work: each chapter starts
+        # with a fresh invocation_id at run_async time, world_builder
+        # detects post-setup state and short-circuits to the turn loop.
+        (world_builder_node, {
+            "setup": query_planner_node,
+            "skip": intent_router_node,
+        }),
 
         # Parse the JSON response into a Python List
         (query_planner_node, query_parser_node),
@@ -128,21 +136,18 @@ def build_fable_workflow() -> Workflow:
             "recovery": recovery_node
         }),
 
-        # Recovery exit: skip the failed storyteller / summarizer entirely
-        # and let the player redirect via fresh choices.
-        (recovery_node, user_choice_node),
+        # Recovery: writes a fallback prose into state.last_story_text
+        # and terminates. Frontend will render generic fallback choices
+        # from runner's chapter_meta frame (synthesised when
+        # state.last_chapter_meta is missing).
+        # (recovery_node has no outgoing edge -> terminal)
 
-        # Narrative Intelligence: Summarize, then Surface Choices
+        # Narrative Intelligence: Summarize, then TERMINATE.
+        # No HITL, no loop-back. The runner emits chapter_meta after the
+        # workflow exits; the next user choice triggers a fresh
+        # run_async with state_delta carrying last_user_choice.
         (archivist_node, summarizer_parser_node),
-        (summarizer_parser_node, user_choice_node),
-
-        # After waiting for user input, loop back to the intent router.
-        # Mid-game lore enrichment is handled inside the storyteller via
-        # ``lore_lookup`` tool calls + a ``before_model_callback`` that
-        # pre-injects facts for active characters -- not by re-entering
-        # the one-shot setup swarm. The deterministic graph topology is
-        # the ADK 2.0 idiom; knowledge management is per-agent.
-        (user_choice_node, intent_router_node),
+        # summarizer_parser_node has no outgoing edge -> terminal
     ]
 
     # 4. Create the Workflow Node.

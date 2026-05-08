@@ -98,6 +98,41 @@ async def _emit_state_update(session_id: str, user_id: str) -> None:
         logger.exception("Failed to emit state_update for session %s", session_id)
 
 
+async def _emit_chapter_meta(session_id: str, user_id: str) -> None:
+    """Emit a chapter_meta WS frame from state.last_chapter_meta.
+
+    If the field is missing (e.g. recovery turn or storyteller dropped
+    its JSON tail), synthesise a minimal payload with 4 generic typed
+    choices so the frontend can still render a picker. Mirrors the
+    fallback that user_choice_input_node previously had.
+    """
+    try:
+        session = await fable_runner.session_service.get_session(
+            app_name=fable_runner.app_name,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        state = (session.state if session else {}) or {}
+        meta = state.get("last_chapter_meta")
+        if not meta:
+            meta = {
+                "summary": "(chapter completed; structured tail missing — fallback)",
+                "choices": [
+                    {"text": "Continue cautiously into the next scene.", "tier": "character", "tied_event": None},
+                    {"text": "Investigate the most recent disturbance.", "tier": "character", "tied_event": None},
+                    {"text": "Take an unexpected risk that breaks pattern.", "tier": "wildcard", "tied_event": None},
+                    {"text": "Confront the most pressing canon thread head-on.", "tier": "canon", "tied_event": None},
+                ],
+                "questions": [],
+            }
+        await manager.send_personal_message({
+            "type": "chapter_meta",
+            "data": meta,
+        }, session_id)
+    except Exception:
+        logger.exception("Failed to emit chapter_meta for session %s", session_id)
+
+
 async def execute_adk_turn(
     session_id: str,
     user_id: str = "local_tester",
@@ -108,6 +143,7 @@ async def execute_adk_turn(
     original_chapter: Optional[str] = None,
     prev_summaries: Optional[list[str]] = None,
     rewrite_chapter_number: Optional[int] = None,
+    question_answers: Optional[dict] = None,
 ):
     """
     Executes a single turn of the ADK 2.0 graph.
@@ -178,6 +214,15 @@ async def execute_adk_turn(
             role="user",
             parts=[types.Part.from_text(text=message_text)],
         )
+        # Option A: write the user's chapter choice + meta-question answers
+        # into state via state_delta so the next workflow run sees them
+        # without re-traversing setup HITLs. The intent_router reads
+        # last_user_choice; the storyteller's before_model_callback uses
+        # last_user_question_answers for tone shaping.
+        sd: dict = {"last_user_choice": message_text}
+        if question_answers:
+            sd["last_user_question_answers"] = question_answers
+        run_kwargs["state_delta"] = sd
     elif message_text == "/start":
         run_kwargs["new_message"] = types.Content(
             role="user",
@@ -261,8 +306,12 @@ async def execute_adk_turn(
                     session_id,
                 )
 
-        # Generator exhausted — emit state snapshot, then terminal marker.
+        # Generator exhausted — emit state snapshot, chapter_meta (Option A:
+        # the channel that carries typed choices + meta-questions to the
+        # frontend; replaces the old user_choice_selection HITL), then
+        # the terminal marker.
         await _emit_state_update(session_id, user_id)
+        await _emit_chapter_meta(session_id, user_id)
         await manager.send_personal_message({
             "type": "turn_complete",
             "invocation_id": last_invocation_id,

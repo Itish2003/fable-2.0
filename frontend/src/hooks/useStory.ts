@@ -107,7 +107,7 @@ export type ChapterMetaData = {
 
 // ─── Inbound WS message discriminated union (covers ALL backend types) ─────
 export type WsMessage =
-  | { type: 'text_delta'; text: string; author?: string }
+  | { type: 'text_delta'; text: string; author?: string; is_snapshot?: boolean }
   | { type: 'request_input'; interrupt_id: string; message: string }
   | { type: 'status'; message: string }
   | { type: 'turn_complete'; invocation_id?: string }
@@ -189,7 +189,16 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           setIsTyping(true);
           const author: ProseFragment['author'] =
             data.author && data.author !== 'storyteller' ? 'system' : 'narrator';
-          setProseAndFragment(author, data.text);
+          if (data.is_snapshot) {
+            // Reload-replay: REPLACE prose entirely so a reconnect after
+            // an abnormal disconnect doesn\'t double-up Chapter N on top
+            // of the same chapter the React state already holds.
+            setProse(data.text);
+            fragmentIdRef.current += 1;
+            setProseFragments([{ id: fragmentIdRef.current, author, text: data.text }]);
+          } else {
+            setProseAndFragment(author, data.text);
+          }
           setSetupComplete(true);
           break;
         }

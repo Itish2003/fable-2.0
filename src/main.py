@@ -218,14 +218,18 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             await _emit_state_update(session_id=session_id, user_id="local_tester")
 
             # Re-emit the most recent chapter prose so the player can read it.
-            # Without this, the StoryView reconnects with empty prose even
-            # though state.last_story_text is set.
+            # is_snapshot=True tells the frontend to REPLACE the prose, not
+            # append. Without that flag, an abnormal WS disconnect followed
+            # by auto-reconnect (server restart / network blip / tab
+            # suspend) would append the chapter on top of the existing
+            # prose state -- Chapter 1 shown twice.
             last_story = (existing.state or {}).get("last_story_text") if existing else None
             if last_story:
                 await manager.send_personal_message({
                     "type": "text_delta",
                     "author": "storyteller",
                     "text": last_story,
+                    "is_snapshot": True,
                 }, session_id)
 
             # Re-emit chapter_meta so the choice picker + meta-questions

@@ -14,6 +14,8 @@ import logging
 import os
 from typing import Any, AsyncGenerator
 
+from pydantic import ValidationError
+
 from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events import Event, EventActions
@@ -21,6 +23,7 @@ from google.adk.events.request_input import RequestInput
 from google.genai import types
 
 from src.state.models import FableAgentState  # noqa: F401  (state_schema validation)
+from src.state.wizard_question import WizardQuestion
 
 logger = logging.getLogger("fable.worldbuilder")
 
@@ -68,7 +71,16 @@ free-text "Other" hint). Return strictly JSON, no markdown fences.
 
 
 async def _generate_wizard_question(premise: str) -> dict | None:
-    """Async direct genai call (uses client.aio so it doesn't block the loop)."""
+    """Async direct genai call wrapped in WizardQuestion validation.
+
+    The previous shape parsed JSON manually and gated on string-keyed
+    ``isinstance(data, dict) and 'question' in data`` checks; on any
+    drift the wizard would silently skip with no diagnostic. Now: the
+    response is forced through ``response_schema=WizardQuestion`` so
+    Gemini emits matching JSON, and the result is re-validated through
+    the Pydantic model. Either we get a clean, typed dict back or we
+    log + skip; the silent-skip class is gone.
+    """
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         logger.warning("Setup wizard: no GOOGLE_API_KEY/GEMINI_API_KEY; skipping interrogation.")
@@ -81,20 +93,28 @@ async def _generate_wizard_question(premise: str) -> dict | None:
             contents=_WIZARD_PROMPT + (premise or "(no premise provided)"),
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
+                response_schema=WizardQuestion,
                 temperature=0.4,
             ),
         )
         text = (resp.text or "").strip()
         if not text:
+            logger.warning("Setup wizard: empty response from model.")
             return None
-        data = json.loads(text)
-        # Schema gate
-        if not isinstance(data, dict) or "question" not in data or "options" not in data:
+        try:
+            data = json.loads(text)
+            wq = WizardQuestion.model_validate(data)
+        except (json.JSONDecodeError, ValidationError) as e:
+            logger.warning(
+                "Setup wizard: response failed validation (%s). Raw: %s",
+                e, text[:200],
+            )
             return None
+        # Cap options at 5 (defensive; schema doesn't constrain length).
         return {
-            "question": str(data.get("question", "")).strip(),
-            "context": str(data.get("context", "")).strip(),
-            "options": [str(o) for o in (data.get("options") or [])][:5],
+            "question": wq.question.strip(),
+            "context": (wq.context or "").strip(),
+            "options": [o for o in wq.options][:5],
         }
     except Exception as e:
         logger.warning("Setup wizard generation failed: %s", e)

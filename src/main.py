@@ -217,42 +217,34 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             # Resumed session: push current state so the sidebar populates immediately.
             await _emit_state_update(session_id=session_id, user_id="local_tester")
 
-            # Re-emit the most recent chapter prose so the player can read it.
-            # is_snapshot=True tells the frontend to REPLACE the prose, not
-            # append. Without that flag, an abnormal WS disconnect followed
-            # by auto-reconnect (server restart / network blip / tab
-            # suspend) would append the chapter on top of the existing
-            # prose state -- Chapter 1 shown twice.
-            last_story = (existing.state or {}).get("last_story_text") if existing else None
-            if last_story:
-                await manager.send_personal_message({
-                    "type": "text_delta",
-                    "author": "storyteller",
-                    "text": last_story,
-                    "is_snapshot": True,
-                }, session_id)
-
-            # Re-emit chapter_meta so the choice picker + meta-questions
-            # render after a reload. Two cases this covers:
+            # Re-emit the most recent chapter as a single chapter_meta
+            # frame containing prose + choices + questions. Post-refactor
+            # streaming is gone; the prose ships in `data.prose` and the
+            # frontend renders it atomically (no append-vs-replace logic
+            # needed, no is_snapshot flag).
+            #
+            # Two cases this covers:
             #   (a) Player reloaded mid-game with a chapter waiting for
-            #       their choice. Without this, choices vanish on F5.
-            #   (b) Previous workflow crashed mid-archivist (e.g. the
-            #       stale-session compaction race we just fixed) before
+            #       their choice. Without this, the chapter would be
+            #       blank on F5.
+            #   (b) Previous workflow crashed mid-archivist before
             #       runner._emit_chapter_meta could fire. The auditor
-            #       had already parsed the JSON tail into
-            #       state.last_chapter_meta, so the choices DO exist --
-            #       just never reached the WS.
+            #       had already written state.last_chapter_meta and
+            #       storyteller_merge had written state.last_story_text
+            #       so the data exists -- just never reached the WS.
             # We skip when the user has already submitted a choice
-            # (state.last_user_choice non-empty) -- that means a NEW
-            # chapter is in flight and the frontend will get fresh
-            # chapter_meta when that turn completes.
+            # (state.last_user_choice non-empty) -- a NEW chapter is in
+            # flight and the frontend will get fresh chapter_meta when
+            # that turn completes.
             cb_state = existing.state or {}
             chap_meta = cb_state.get("last_chapter_meta")
+            last_story = cb_state.get("last_story_text") or ""
             last_choice = (cb_state.get("last_user_choice") or "").strip()
             if chap_meta and not last_choice:
+                payload = {**chap_meta, "prose": last_story}
                 await manager.send_personal_message({
                     "type": "chapter_meta",
-                    "data": chap_meta,
+                    "data": payload,
                 }, session_id)
 
             # Restore pending HITL only if it's actually UNANSWERED.

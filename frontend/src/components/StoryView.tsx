@@ -41,6 +41,7 @@ interface StoryViewProps {
     pendingQuestions: ChapterQuestion[];
     loreUpdates: LoreStatus[];
     storyState: StoryStateData | null;
+    currentPhase: string | null;
     sendChoice: (msg: string, questionAnswers?: Record<string, string>) => void;
     submitInput: (
       payload: string | { choice: string; question_answers?: Record<string, string> },
@@ -109,30 +110,31 @@ const CHOICE_THEMES: Record<ChoiceTier, TierTheme> = {
 // Default quick-pick chips for the rewrite modal.
 const REWRITE_CHIPS = ['darker', 'more action', 'more dialogue', 'less expository'];
 
-// ─── Author styling for text_delta ───────────────────────────────────────────
+// Phase B: per-fragment author styling. Streaming is gone; this stays as
+// dead-code-but-compiles so the import surface stays compatible until
+// the type re-export can be cleaned up. proseFragments is always [].
 function fragmentClass(author: ProseFragment['author']): string {
   switch (author) {
     case 'narrator':
       return 'text-slate-300';
     case 'system':
-      // Slightly muted tone + lighter weight to differentiate system asides
-      // from narrator prose.
       return 'text-indigo-300/80 font-light italic';
   }
 }
+void fragmentClass;  // suppress unused warning; kept for future re-introduction
 
 export default function StoryView({ story, onBack }: StoryViewProps) {
   const {
     isConnected,
     isTyping,
     prose,
-    proseFragments,
     pendingInput,
     choices,
     choicePrompt,
     pendingQuestions,
     loreUpdates,
     storyState,
+    currentPhase,
     sendChoice,
     submitInput,
     undoTurn,
@@ -159,7 +161,7 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const rewriteTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll to bottom as prose streams in
+  // Auto-scroll to bottom when a new chapter renders or pending HITL arrives.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [prose, pendingInput]);
@@ -337,26 +339,33 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
           )}
         </header>
 
-        {/* Prose Area */}
+        {/* Prose Area — renders the LATEST chapter atomically. Streaming
+            is gone; the chapter arrives in one chapter_meta frame after
+            the workflow completes (~60-120s). The loading state below
+            shows the current node-completion phase so the wait has
+            progressive feedback. */}
         <div className="flex-1 overflow-y-auto pt-24 pb-4 px-6 md:px-12 lg:px-24">
           <div className="max-w-3xl mx-auto prose prose-invert prose-slate prose-lg">
-            <div className="whitespace-pre-wrap leading-relaxed tracking-wide font-serif">
-              {proseFragments.length === 0 ? (
-                <span className="text-slate-600 italic">
-                  {prose || (isTyping ? 'Igniting the narrative engine...' : 'Reconnected. Type your next action or use the input below to continue.')}
-                </span>
-              ) : (
-                proseFragments.map((f) => (
-                  <span key={f.id} className={fragmentClass(f.author)}>
-                    {f.text}
-                  </span>
-                ))
-              )}
-            </div>
+            {prose ? (
+              <div className="whitespace-pre-wrap leading-relaxed tracking-wide font-serif text-slate-200">
+                {prose}
+              </div>
+            ) : (
+              <div className="text-slate-600 italic font-serif">
+                {isTyping
+                  ? (currentPhase ?? 'Igniting the narrative engine…')
+                  : 'Awaiting your next action.'}
+              </div>
+            )}
 
-            {/* Blinking cursor effect while typing */}
-            {isTyping && !pendingInput && (
-              <span className="inline-block w-2 h-5 ml-1 bg-slate-400 animate-pulse align-middle" />
+            {/* Loading indicator beneath the chapter while a new one
+                generates. Shows the live node-completion copy if any
+                node has finished, otherwise a generic message. */}
+            {isTyping && prose && (
+              <div className="mt-6 flex items-center gap-3 text-indigo-300/80 italic text-sm not-prose">
+                <span className="inline-block w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                <span>{currentPhase ?? 'Generating chapter…'}</span>
+              </div>
             )}
 
             <div ref={bottomRef} className="h-4" />

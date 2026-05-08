@@ -17,8 +17,6 @@ export type LoreStatus = {
 export type SuspicionTier = 'oblivious' | 'uneasy' | 'suspicious' | 'breakthrough';
 
 // Phase B: typed-choice taxonomy from the storyteller's ChapterOutput tail.
-// One of each tier per chapter (canon-path / divergence / character-driven /
-// wildcard). Replaces the previous SuspicionTier-based shape.
 export type ChoiceTier = 'canon' | 'divergence' | 'character' | 'wildcard';
 
 export type Choice = {
@@ -27,8 +25,6 @@ export type Choice = {
   tied_event?: string | null;
 };
 
-// Meta-question for the next chapter's tone/style. Rendered alongside the
-// 4 plot-advancing choices; answers are bundled into the resume payload.
 export type ChapterQuestion = {
   question: string;
   context: string;
@@ -59,17 +55,21 @@ export type StoryStateData = {
   chapter: number;
 };
 
+// ProseFragment kept as a TYPE export for callers that import it (e.g.
+// StoryView.tsx). Post-refactor the array stays empty -- streaming is
+// gone; chapter prose now arrives atomically via the chapter_meta frame.
 export type ProseFragment = {
   id: number;
   author: 'narrator' | 'system';
   text: string;
 };
 
-// Phase A: structured tail emitted by the Storyteller (ChapterOutput model
-// in src/state/chapter_output.py). The frontend declares the channel here
-// so the exhaustiveness check stays green; Phase B will replace the no-op
-// handler below with real choice/timeline rendering.
+// ChapterMetaData now carries the chapter prose alongside the structured
+// tail. Streaming is gone; this single frame is what the player sees as
+// "the chapter completed". Backend writes `prose` from
+// state.last_story_text in src/ws/runner.py::_emit_chapter_meta.
 export type ChapterMetaData = {
+  prose: string;
   summary: string;
   choices: Array<{
     text: string;
@@ -105,11 +105,11 @@ export type ChapterMetaData = {
   }>;
 };
 
-// ─── Inbound WS message discriminated union (covers ALL backend types) ─────
+// ─── Inbound WS message discriminated union ────────────────────────────────
 export type WsMessage =
-  | { type: 'text_delta'; text: string; author?: string; is_snapshot?: boolean }
   | { type: 'request_input'; interrupt_id: string; message: string }
   | { type: 'status'; message: string }
+  | { type: 'node_complete'; node: string; copy: string }
   | { type: 'turn_complete'; invocation_id?: string }
   | { type: 'error'; message: string; kind?: 'session_not_found' | 'timeout' | string }
   | { type: 'undo_complete' }
@@ -117,8 +117,6 @@ export type WsMessage =
   | { type: 'state_update'; data: StoryStateData }
   | { type: 'chapter_meta'; data: ChapterMetaData };
 
-// Exhaustiveness helper: the never-check fallthrough surfaces unhandled
-// message types as TypeScript errors at compile time.
 function assertNever(x: never): never {
   throw new Error(`Unhandled WS message type: ${JSON.stringify(x)}`);
 }
@@ -131,8 +129,12 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
   const [isTyping, setIsTyping] = useState(false);
   const [isResearching, setIsResearching] = useState(false);
 
+  // `prose` now holds the LATEST chapter only (replaced on each
+  // chapter_meta frame). Streaming is gone; per-word append-style state
+  // is unnecessary. The proseFragments array is kept as an empty
+  // backwards-compat surface for components that still import the type.
   const [prose, setProse] = useState<string>('');
-  const [proseFragments, setProseFragments] = useState<ProseFragment[]>([]);
+  const [proseFragments] = useState<ProseFragment[]>([]);
   const [pendingInput, setPendingInput] = useState<RequestInputData | null>(null);
   const [choices, setChoices] = useState<Choice[]>([]);
   const [choicePrompt, setChoicePrompt] = useState<string>('');
@@ -141,33 +143,16 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
   const [setupComplete, setSetupComplete] = useState(isResumed);
   const [invocationHistory, setInvocationHistory] = useState<string[]>([]);
   const [storyState, setStoryState] = useState<StoryStateData | null>(null);
+  // currentPhase carries the latest node_complete copy ("Drafting
+  // chapter…", "Recording outcomes…", etc.) so the loading state has
+  // progressive feedback during the ~60-120s chapter generation.
+  const [currentPhase, setCurrentPhase] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const loreIdRef = useRef(0);
-  const fragmentIdRef = useRef(0);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const intentionalCloseRef = useRef(false);
-
-  const appendFragment = useCallback((author: ProseFragment['author'], text: string) => {
-    if (!text) return;
-    setProseFragments(prev => {
-      // Coalesce consecutive same-author chunks to keep the segment list short.
-      const last = prev[prev.length - 1];
-      if (last && last.author === author) {
-        return [...prev.slice(0, -1), { ...last, text: last.text + text }];
-      }
-      fragmentIdRef.current += 1;
-      return [...prev, { id: fragmentIdRef.current, author, text }];
-    });
-  }, []);
-
-  // Keep the legacy `prose` string in sync so existing UI code that consumed
-  // the concatenated form keeps working (cursor, scroll, rewrite modal context).
-  const setProseAndFragment = useCallback((author: ProseFragment['author'], text: string) => {
-    setProse(prev => prev + text);
-    appendFragment(author, text);
-  }, [appendFragment]);
 
   // Manage WebSocket Connection (with reconnect)
   useEffect(() => {
@@ -185,48 +170,19 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
       }
 
       switch (data.type) {
-        case 'text_delta': {
-          setIsTyping(true);
-          const author: ProseFragment['author'] =
-            data.author && data.author !== 'storyteller' ? 'system' : 'narrator';
-          if (data.is_snapshot) {
-            // Reload-replay: REPLACE prose entirely so a reconnect after
-            // an abnormal disconnect doesn\'t double-up Chapter N on top
-            // of the same chapter the React state already holds.
-            setProse(data.text);
-            fragmentIdRef.current += 1;
-            setProseFragments([{ id: fragmentIdRef.current, author, text: data.text }]);
-          } else {
-            setProseAndFragment(author, data.text);
-          }
-          setSetupComplete(true);
-          break;
-        }
-
         case 'request_input':
           setIsTyping(false);
           setIsResearching(false);
+          setCurrentPhase(null);
           setPendingInput({
             interrupt_id: data.interrupt_id,
             message: data.message,
           });
-
-          // Setup HITLs (lore_dump / wizard / configuration / world_primer)
-          // never carry choices in their message body. Chapter choices now
-          // arrive via the chapter_meta WS frame (Option A). Reset here.
+          // Setup HITLs never carry choices; chapter choices arrive via
+          // chapter_meta. Reset both surfaces here.
           setChoices([]);
           setChoicePrompt('');
           setPendingQuestions([]);
-
-          // Ensure prose has a clean break before the prompt (setup HITLs only).
-          if (
-            data.interrupt_id !== 'setup_lore_dump' &&
-            data.interrupt_id !== 'setup_wizard_question' &&
-            data.interrupt_id !== 'setup_configuration' &&
-            data.interrupt_id !== 'setup_world_primer'
-          ) {
-            setProseAndFragment('system', `\n\n> *${data.message}*\n\n`);
-          }
           break;
 
         case 'status':
@@ -237,9 +193,18 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           ]);
           break;
 
+        case 'node_complete':
+          // Backend emits one of these per inner-agent end_of_agent
+          // event. Replace the current phase copy so the loading UI
+          // tracks workflow progress without streaming any prose.
+          setCurrentPhase(data.copy);
+          setIsTyping(true);
+          setSetupComplete(true);
+          break;
+
         case 'turn_complete':
           setIsTyping(false);
-          setProseAndFragment('narrator', '\n\n');
+          setCurrentPhase(null);
           if (data.invocation_id) {
             setInvocationHistory(prev => [...prev, data.invocation_id as string]);
           }
@@ -247,8 +212,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
         case 'undo_complete':
           setIsTyping(false);
-          setProseAndFragment('system', '\n\n**[System]**: Timeline rewind successful. Awaiting new input...\n\n');
-          // Remove the last invocation since it was undone
+          setCurrentPhase(null);
           setInvocationHistory(prev => prev.slice(0, -1));
           setPendingInput(null);
           setChoices([]);
@@ -258,8 +222,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
         case 'rewrite_started':
           setIsTyping(true);
-          setProseAndFragment('system', '\n\n**[System]**: Applying rewrite constraint and regenerating timeline...\n\n');
-          // Remove the last invocation since it was undone
+          setCurrentPhase('Applying rewrite…');
           setInvocationHistory(prev => prev.slice(0, -1));
           setPendingInput(null);
           setChoices([]);
@@ -269,13 +232,14 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
         case 'error':
           setIsTyping(false);
+          setCurrentPhase(null);
           if (data.kind === 'session_not_found') {
-            // Session was deleted server-side; reset so the parent App
-            // returns to the HomeScreen.
             window.dispatchEvent(new CustomEvent('fable:session-not-found'));
             return;
           }
-          setProseAndFragment('system', `\n\n[System Error]: ${data.message}\n\n`);
+          // For visible errors, surface inline by replacing prose
+          // briefly. The chapter is still in DB; reload restores it.
+          setProse(`[System Error]: ${data.message}`);
           break;
 
         case 'state_update':
@@ -283,11 +247,18 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           break;
 
         case 'chapter_meta': {
-          // Option A: chapter completed; render typed choices + meta-questions.
-          // The data shape mirrors ChapterOutput (Pydantic) from src/state/chapter_output.py.
+          // Atomic chapter render: prose + structured tail in one frame.
+          // REPLACE prose so a reconnect re-emit doesn't double the
+          // chapter on top of itself (kills the bug 08f5577 used to fix
+          // via is_snapshot=true; the redesign makes that flag obsolete).
           setIsTyping(false);
           setIsResearching(false);
+          setCurrentPhase(null);
           const meta = data.data;
+          if (typeof meta.prose === 'string' && meta.prose.length > 0) {
+            setProse(meta.prose);
+            setSetupComplete(true);
+          }
           const choicesIn = Array.isArray(meta.choices) ? meta.choices : [];
           const normalized: Choice[] = choicesIn.map((c) => ({
             text: String(c.text ?? ''),
@@ -301,8 +272,6 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
         }
 
         default:
-          // Compile-time exhaustiveness: a future backend type that's not in
-          // the WsMessage union will surface here as a TS error.
           assertNever(data);
       }
     };
@@ -330,7 +299,6 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           return;
         }
 
-        // Abnormal close: exponential backoff reconnect.
         if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
           const delay = RECONNECT_DELAYS_MS[reconnectAttemptsRef.current] ?? 16000;
           reconnectAttemptsRef.current += 1;
@@ -367,24 +335,20 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
     questionAnswers?: Record<string, string>,
   ) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-
-    setProseAndFragment('system', `\n**[Action]**: ${message}\n\n`);
     setIsTyping(true);
+    setCurrentPhase('Sending choice…');
 
     // Option A: chapter choice goes as plain message (NOT a function_response
-    // wrapper) so the runner gets a fresh invocation_id per chapter. Bundle
-    // the meta-question answers if present.
+    // wrapper) so the runner gets a fresh invocation_id per chapter.
     const payload: Record<string, unknown> = { message };
     if (questionAnswers && Object.keys(questionAnswers).length > 0) {
       payload.question_answers = questionAnswers;
     }
     wsRef.current.send(JSON.stringify(payload));
 
-    // Clear local choice state so the picker disappears while the next
-    // chapter is generating.
     setChoices([]);
     setPendingQuestions([]);
-  }, [setProseAndFragment]);
+  }, []);
 
   const submitInput = useCallback((
     payload: string | { choice: string; question_answers?: Record<string, string> },
@@ -392,31 +356,21 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !pendingInput) return;
 
     const isStructured = typeof payload !== 'string';
-    const previewText = isStructured ? payload.choice : payload;
     const resumePayload: string | { choice: string; question_answers: Record<string, string> } =
       isStructured
         ? { choice: payload.choice, question_answers: payload.question_answers ?? {} }
         : payload;
 
-    if (
-      pendingInput.interrupt_id !== 'setup_lore_dump' &&
-      pendingInput.interrupt_id !== 'setup_configuration' &&
-      pendingInput.interrupt_id !== 'setup_world_primer'
-    ) {
-      setProseAndFragment('system', `**[Reply]**: ${previewText}\n\n`);
-    }
-
     if (pendingInput.interrupt_id === 'setup_configuration') {
       setIsResearching(true);
     }
-
-    // Once primer is approved, we are waiting for the storyteller, no longer researching
     if (pendingInput.interrupt_id === 'setup_world_primer') {
       setIsResearching(false);
       setSetupComplete(true);
     }
 
     setIsTyping(true);
+    setCurrentPhase('Submitting…');
 
     wsRef.current.send(JSON.stringify({
       interrupt_id: pendingInput.interrupt_id,
@@ -425,38 +379,36 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
     setPendingInput(null);
     setPendingQuestions([]);
-  }, [pendingInput, setProseAndFragment]);
+  }, [pendingInput]);
 
   const undoTurn = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (invocationHistory.length === 0) return;
 
     const lastInvocation = invocationHistory[invocationHistory.length - 1];
-
     setIsTyping(true);
-    setProseAndFragment('system', `\n\n**[System]**: Initiating timeline rewind...\n\n`);
+    setCurrentPhase('Rewinding…');
 
     wsRef.current.send(JSON.stringify({
       action: 'undo',
       invocation_id: lastInvocation,
     }));
-  }, [invocationHistory, setProseAndFragment]);
+  }, [invocationHistory]);
 
   const rewriteTurn = useCallback((instruction: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (invocationHistory.length === 0) return;
 
     const lastInvocation = invocationHistory[invocationHistory.length - 1];
-
     setIsTyping(true);
-    setProseAndFragment('system', `\n\n**[System]**: Requesting rewrite constraint: "${instruction}"...\n\n`);
+    setCurrentPhase('Requesting rewrite…');
 
     wsRef.current.send(JSON.stringify({
       action: 'rewrite',
       invocation_id: lastInvocation,
       instruction: instruction,
     }));
-  }, [invocationHistory, setProseAndFragment]);
+  }, [invocationHistory]);
 
   return {
     isConnected,
@@ -471,6 +423,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
     storyState,
     setupComplete,
     pendingQuestions,
+    currentPhase,
     sendChoice,
     submitInput,
     undoTurn,

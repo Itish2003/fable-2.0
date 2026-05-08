@@ -6,7 +6,6 @@ from google.genai import types
 from google.adk.workflow import NodeTimeoutError
 
 from src.app_container import fable_runner
-from src.state.chapter_output import parse_chapter_tail
 from src.ws.manager import manager
 # HITL helpers are not publicly re-exported from google.adk.workflow or
 # google.adk.events; the underscored module is the only path to them in
@@ -19,10 +18,24 @@ from google.adk.workflow.utils._workflow_hitl_utils import (  # noqa: PLC2701
 
 logger = logging.getLogger("fable.runner_loop")
 
+# Per-node-completion status copy sent to the frontend so the user gets
+# progressive feedback during the ~60-120s chapter generation. Replaces
+# the old prose streaming UX (text_delta frames) which has been deleted
+# along with the fenced-JSON-tail design. The native ADK signal we key
+# off is ``event.actions.end_of_agent`` (set when an agent finishes) +
+# ``event.author`` (the inner-agent name).
+_NODE_STATUS_COPY = {
+    "storyteller": "Drafting chapter…",
+    "storyteller_merge": "Composing chapter…",
+    "auditor": "Auditing canon…",
+    "archivist": "Recording outcomes…",
+    "archivist_merge": "Updating world state…",
+    "summarizer": "Summarising…",
+    "summarizer_persist": "Indexing memory…",
+}
+
 
 # Field-name translation: FableAgentState (server) -> frontend contract.
-# The schema is frozen by the cross-agent contract; do not change without
-# coordinating with Agent 5.
 def _build_state_update_payload(state: dict) -> dict:
     """Project the raw session state into the agreed `state_update` shape.
 
@@ -32,14 +45,12 @@ def _build_state_update_payload(state: dict) -> dict:
     """
     state = state or {}
 
-    # power_debt -> power_debt_level (int)
     power_debt = state.get("power_debt") or {}
     if isinstance(power_debt, dict):
         power_debt_level = power_debt.get("strain_level", 0) or 0
     else:
         power_debt_level = 0
 
-    # active_characters: dict[name, CharacterState-as-dict] -> list[dict]
     raw_chars = state.get("active_characters") or {}
     active_characters = []
     if isinstance(raw_chars, dict):
@@ -53,7 +64,6 @@ def _build_state_update_payload(state: dict) -> dict:
                 "present": bool(char.get("is_present", False)),
             })
 
-    # active_divergences: list[DivergenceRecord-as-dict] -> list[summary dict]
     raw_divergences = state.get("active_divergences") or []
     active_divergences = []
     if isinstance(raw_divergences, list):
@@ -79,10 +89,7 @@ def _build_state_update_payload(state: dict) -> dict:
 
 
 async def _emit_state_update(session_id: str, user_id: str) -> None:
-    """Fetch the latest session state and push a `state_update` frame.
-
-    Isolated so a session-fetch glitch never suppresses `turn_complete`.
-    """
+    """Fetch the latest session state and push a `state_update` frame."""
     try:
         session = await fable_runner.session_service.get_session(
             app_name=fable_runner.app_name,
@@ -99,12 +106,13 @@ async def _emit_state_update(session_id: str, user_id: str) -> None:
 
 
 async def _emit_chapter_meta(session_id: str, user_id: str) -> None:
-    """Emit a chapter_meta WS frame from state.last_chapter_meta.
+    """Emit a chapter_meta WS frame combining the prose and the structured tail.
 
-    If the field is missing (e.g. recovery turn or storyteller dropped
-    its JSON tail), synthesise a minimal payload with 4 generic typed
-    choices so the frontend can still render a picker. Mirrors the
-    fallback that user_choice_input_node previously had.
+    Post-refactor: streaming is gone. The chapter prose travels in this
+    single frame (in ``data.prose``) so the frontend can render the
+    whole chapter atomically when the workflow completes. If
+    ``state.last_chapter_meta`` is missing (recovery turn), synthesise
+    fallback choices.
     """
     try:
         session = await fable_runner.session_service.get_session(
@@ -125,9 +133,15 @@ async def _emit_chapter_meta(session_id: str, user_id: str) -> None:
                 ],
                 "questions": [],
             }
+        # Bundle the prose into the same frame so the frontend renders
+        # prose + choices + questions in one atomic update. Falls back to
+        # empty string on a session where storyteller_merge hasn't run
+        # (e.g. setup-only turn -- shouldn't happen on the chapter path,
+        # but defensive).
+        payload = {**meta, "prose": state.get("last_story_text") or ""}
         await manager.send_personal_message({
             "type": "chapter_meta",
-            "data": meta,
+            "data": payload,
         }, session_id)
     except Exception:
         logger.exception("Failed to emit chapter_meta for session %s", session_id)
@@ -150,9 +164,6 @@ async def execute_adk_turn(
     Filters the Event stream and pushes updates via WebSockets.
     """
 
-    # Note: invocation_id is intentionally NOT supplied. ADK auto-generates
-    # one per turn; supplying our own breaks resume semantics (rewind keys
-    # off the auto-generated id).
     run_kwargs: dict = {
         "user_id": user_id,
         "session_id": session_id,
@@ -165,10 +176,6 @@ async def execute_adk_turn(
 
     # 1. Prepare Input
     if rewrite_instruction:
-        # Phase E: transactional rewrite -- include the previous chapter
-        # summaries + the original chapter text (truncated) as reference
-        # context, plus the user's instruction. The storyteller writes the
-        # SAME chapter number; do NOT diverge into a different chapter.
         prev_block = ""
         if prev_summaries:
             lines = [f"  - {s}" for s in prev_summaries if s]
@@ -214,11 +221,6 @@ async def execute_adk_turn(
             role="user",
             parts=[types.Part.from_text(text=message_text)],
         )
-        # Option A: write the user's chapter choice + meta-question answers
-        # into state via state_delta so the next workflow run sees them
-        # without re-traversing setup HITLs. The intent_router reads
-        # last_user_choice; the storyteller's before_model_callback uses
-        # last_user_question_answers for tone shaping.
         sd: dict = {"last_user_choice": message_text}
         if question_answers:
             sd["last_user_question_answers"] = question_answers
@@ -254,7 +256,6 @@ async def execute_adk_turn(
                 interrupt_ids = get_request_input_interrupt_ids(event)
                 req_interrupt_id = interrupt_ids[0] if interrupt_ids else "unknown"
 
-                # Extract the prompt message from the function call arguments
                 req_message = "Please provide input."
                 if event.content and event.content.parts:
                     for part in event.content.parts:
@@ -270,46 +271,47 @@ async def execute_adk_turn(
                 }, session_id)
                 continue
 
-            # 3. Handle Standard Events (Node Output) — identify the inner
-            #    agent via `node_name` (Workflow wraps every event with
-            #    author='fable_main_workflow', so author is useless here).
-            #    Inner LlmAgents inside a Workflow run with stream=False, so
-            #    we emit the full final response as a single text_delta
-            #    rather than waiting for partials that never come.
-            if event.content and event.content.parts:
-                text = event.content.parts[0].text
-                node_name = getattr(event, "node_name", None) or getattr(event, "author", "system")
+            # 3. Per-node-completion progress signals. ADK sets
+            #    ``event.actions.end_of_agent`` on the synthetic event
+            #    emitted when an inner agent finishes; ``event.author``
+            #    carries the agent name. We map a known set to status
+            #    copy and push as `node_complete` WS frames so the
+            #    frontend can show progressive loading copy without
+            #    streaming any prose.
+            actions = getattr(event, "actions", None)
+            end_of_agent = bool(getattr(actions, "end_of_agent", False)) if actions else False
+            event_author = getattr(event, "author", "") or ""
+            node_name = getattr(event, "node_name", None) or event_author or ""
 
-                if node_name == "storyteller" and text and event.is_final_response():
-                    # Strip the fenced ```json {...}``` tail so the player
-                    # only sees prose. The auditor downstream re-parses the
-                    # same tail and writes ChapterOutput to state.last_chapter_meta;
-                    # user_choice_input_node consumes it for the HITL panel.
-                    # Stripping here is purely cosmetic for the reader.
-                    prose, _meta = parse_chapter_tail(text)
-                    await manager.send_personal_message({
-                        "type": "text_delta",
-                        "author": "storyteller",
-                        "text": prose,
-                    }, session_id)
-                # Non-storyteller nodes (archivist, summarizer, choice_generator,
-                # lore_keeper) stay silent — their output is JSON or tool calls,
-                # not prose for the player.
-            
+            if end_of_agent and event_author in _NODE_STATUS_COPY:
+                await manager.send_personal_message({
+                    "type": "node_complete",
+                    "node": event_author,
+                    "copy": _NODE_STATUS_COPY[event_author],
+                }, session_id)
+                # node_complete events carry no prose; nothing more to do here.
+                continue
 
             # 4. Handle Tool Calls via the public Event accessor.
-            #    `EventActions.tool_calls` does not exist in ADK 2.0; function
-            #    calls live on `Event.content.parts[*].function_call`.
+            #    Function calls live on event.content.parts[*].function_call.
+            #    With the archivist's tool-loop deleted, the only tool
+            #    calls in normal operation are storyteller's lore_lookup
+            #    / trigger_research and the lore-init swarm's research
+            #    calls. We surface them as `status` frames (existing UX).
             for fc in event.get_function_calls() or []:
                 await manager.send_personal_message(
-                    {"type": "status", "message": f"Writing to Lore Bible: {fc.name}..."},
+                    {"type": "status", "message": f"Consulting: {fc.name}..."},
                     session_id,
                 )
 
-        # Generator exhausted — emit state snapshot, chapter_meta (Option A:
-        # the channel that carries typed choices + meta-questions to the
-        # frontend; replaces the old user_choice_selection HITL), then
-        # the terminal marker.
+            # NOTE: prose streaming is intentionally gone. The chapter
+            # prose now arrives in the post-completion `chapter_meta`
+            # frame (in `data.prose`) along with the structured choices
+            # and questions. See _emit_chapter_meta below.
+
+        # Generator exhausted — emit state snapshot, then the chapter_meta
+        # frame (which now carries prose + choices + questions atomically),
+        # then the terminal marker.
         await _emit_state_update(session_id, user_id)
         await _emit_chapter_meta(session_id, user_id)
         await manager.send_personal_message({

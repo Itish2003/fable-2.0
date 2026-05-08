@@ -100,15 +100,69 @@ async def list_stories(user_id: str):
 
 @app.delete("/stories/{user_id}/{session_id}")
 async def delete_story(user_id: str, session_id: str):
-    """Permanently removes a session from the ADK database."""
+    """Permanently removes a session from the ADK database AND cascades the
+    per-session protagonist LoreNode + its edges + embeddings.
+
+    The lore tables (LoreNode/LoreEdge/LoreEmbedding) have no session
+    column by design -- canon-research embeddings are universally reusable
+    across stories. The ONE exception is the per-session "PROTAGONIST::..."
+    sentinel node and any edges anchored on it (written by the archivist's
+    update_relationship tool); those are story-specific and must be nuked
+    when the story is deleted.
+    """
     from src.services.session_manager import session_service
     try:
+        # 1. Capture the per-session protagonist sentinel BEFORE deleting the session.
+        protagonist_name = None
+        try:
+            existing = await session_service.get_session(
+                app_name="fable_2_0",
+                user_id=user_id,
+                session_id=session_id,
+            )
+            if existing:
+                state = getattr(existing, "state", {}) or {}
+                pn = state.get("protagonist_node_name")
+                if isinstance(pn, str) and pn.startswith("PROTAGONIST::"):
+                    protagonist_name = pn
+        except Exception as snap_err:
+            logger.warning("Pre-delete state snapshot failed for %s: %s", session_id, snap_err)
+
+        # 2. Delete the ADK session (sessions/events/state rows).
         await session_service.delete_session(
             app_name="fable_2_0",
             user_id=user_id,
             session_id=session_id,
         )
         logger.info("Deleted session %s for user %s", session_id, user_id)
+
+        # 3. Cascade-delete the per-session protagonist node + edges + embeddings.
+        if protagonist_name:
+            from sqlalchemy import select, delete
+            from src.database import AsyncSessionLocal
+            from src.state.lore_models import LoreNode, LoreEdge, LoreEmbedding
+            try:
+                async with AsyncSessionLocal() as db:
+                    node_stmt = select(LoreNode).where(LoreNode.name == protagonist_name)
+                    node = (await db.execute(node_stmt)).scalar_one_or_none()
+                    if node is not None:
+                        # Edges have no FK cascade in the schema; remove explicitly.
+                        await db.execute(delete(LoreEdge).where(
+                            (LoreEdge.source_id == node.id) | (LoreEdge.target_id == node.id)
+                        ))
+                        # Cascade=all,delete-orphan on LoreNode.embeddings should handle
+                        # the embeddings, but explicitly drop in case the async DELETE
+                        # path doesn't honour the relationship-level cascade.
+                        await db.execute(delete(LoreEmbedding).where(LoreEmbedding.node_id == node.id))
+                        await db.delete(node)
+                        await db.commit()
+                        logger.info("Cascade-cleaned protagonist sentinel %s", protagonist_name)
+            except Exception as cascade_err:
+                logger.warning(
+                    "Protagonist sentinel cleanup failed for %s: %s",
+                    protagonist_name, cascade_err,
+                )
+
         return {"status": "deleted"}
     except Exception as e:
         logger.error("Failed to delete session %s: %s", session_id, e)

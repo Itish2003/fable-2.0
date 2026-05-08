@@ -16,7 +16,7 @@ from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state, crea
 # Phase 9: Narrative Intelligence Nodes
 from src.nodes.intent_router import run_intent_router
 from src.nodes.summarizer import create_summarizer, summarizer_node
-from src.nodes.choice_generator import create_choice_generator, choice_generator_node
+from src.nodes.user_choice_input import user_choice_input_node
 
 
 def build_fable_workflow() -> Workflow:
@@ -67,9 +67,12 @@ def build_fable_workflow() -> Workflow:
     summarizer_agent_node = build_node(summarizer_agent)
     summarizer_parser_node = summarizer_node
 
-    choice_generator_agent = create_choice_generator()
-    choice_generator_agent_node = build_node(choice_generator_agent)
-    choice_generator_parser_node = choice_generator_node
+    # Phase B: choice_generator removed -- the storyteller already emits
+    # 4 typed choices (canon/divergence/character/wildcard) in its
+    # ChapterOutput JSON tail. user_choice_input_node reads
+    # state.last_chapter_meta (written by the auditor) and surfaces those
+    # choices via a single user_choice_selection HITL.
+    user_choice_node = user_choice_input_node
 
     # 3. Define the Graph Edges (State Machine Logic)
 
@@ -126,13 +129,12 @@ def build_fable_workflow() -> Workflow:
 
         # Recovery exit: skip the failed storyteller / summarizer entirely
         # and let the player redirect via fresh choices.
-        (recovery_node, choice_generator_agent_node),
+        (recovery_node, user_choice_node),
 
-        # Narrative Intelligence: Summarize and Generate Choices
+        # Narrative Intelligence: Summarize, then Surface Choices
         (archivist_node, summarizer_agent_node),
         (summarizer_agent_node, summarizer_parser_node),
-        (summarizer_parser_node, choice_generator_agent_node),
-        (choice_generator_agent_node, choice_generator_parser_node),
+        (summarizer_parser_node, user_choice_node),
 
         # After waiting for user input, loop back to the intent router.
         # Mid-game lore enrichment is handled inside the storyteller via
@@ -140,7 +142,7 @@ def build_fable_workflow() -> Workflow:
         # pre-injects facts for active characters -- not by re-entering
         # the one-shot setup swarm. The deterministic graph topology is
         # the ADK 2.0 idiom; knowledge management is per-agent.
-        (choice_generator_parser_node, intent_router_node),
+        (user_choice_node, intent_router_node),
     ]
 
     # 4. Create the Workflow Node.

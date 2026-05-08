@@ -6,6 +6,7 @@ from google.genai import types
 from google.adk.workflow import NodeTimeoutError
 
 from src.app_container import fable_runner
+from src.state.chapter_output import parse_chapter_tail
 from src.ws.manager import manager
 # HITL helpers are not publicly re-exported from google.adk.workflow or
 # google.adk.events; the underscored module is the only path to them in
@@ -191,13 +192,18 @@ async def execute_adk_turn(
                 text = event.content.parts[0].text
                 node_name = getattr(event, "node_name", None) or getattr(event, "author", "system")
 
-                if node_name == "storyteller" and text:
-                    if event.partial or event.is_final_response():
-                        await manager.send_personal_message({
-                            "type": "text_delta",
-                            "author": "storyteller",
-                            "text": text,
-                        }, session_id)
+                if node_name == "storyteller" and text and event.is_final_response():
+                    # Strip the fenced ```json {...}``` tail so the player
+                    # only sees prose. The auditor downstream re-parses the
+                    # same tail and writes ChapterOutput to state.last_chapter_meta;
+                    # user_choice_input_node consumes it for the HITL panel.
+                    # Stripping here is purely cosmetic for the reader.
+                    prose, _meta = parse_chapter_tail(text)
+                    await manager.send_personal_message({
+                        "type": "text_delta",
+                        "author": "storyteller",
+                        "text": prose,
+                    }, session_id)
                 # Non-storyteller nodes (archivist, summarizer, choice_generator,
                 # lore_keeper) stay silent — their output is JSON or tool calls,
                 # not prose for the player.

@@ -19,12 +19,13 @@ import {
 } from 'lucide-react';
 
 import type {
+  ChapterQuestion,
   Choice,
+  ChoiceTier,
   LoreStatus,
   ProseFragment,
   RequestInputData,
   StoryStateData,
-  SuspicionTier,
 } from '../hooks/useStory';
 
 interface StoryViewProps {
@@ -37,10 +38,13 @@ interface StoryViewProps {
     pendingInput: RequestInputData | null;
     choices: Choice[];
     choicePrompt: string;
+    pendingQuestions: ChapterQuestion[];
     loreUpdates: LoreStatus[];
     storyState: StoryStateData | null;
     sendChoice: (msg: string) => void;
-    submitInput: (txt: string) => void;
+    submitInput: (
+      payload: string | { choice: string; question_answers?: Record<string, string> },
+    ) => void;
     undoTurn: () => void;
     rewriteTurn: (instruction: string) => void;
     canUndo: boolean;
@@ -60,42 +64,45 @@ type TierTheme = {
   label: string;
 };
 
-const TIER_THEMES: Record<SuspicionTier, TierTheme> = {
-  oblivious: {
-    base: 'bg-slate-800/60',
-    hover: 'hover:bg-slate-700/60',
-    border: 'border-slate-700',
-    text: 'text-slate-300',
-    badgeBg: 'bg-slate-700/70',
-    badgeText: 'text-slate-300',
-    label: 'Oblivious',
+// Phase B: typed-choice theming (canon / divergence / character / wildcard).
+// Replaces the previous SuspicionTier-keyed map. Wildcard pulses to flag its
+// high-impact "unexpected" semantics, mirroring the v1 styling for breakthroughs.
+const CHOICE_THEMES: Record<ChoiceTier, TierTheme> = {
+  canon: {
+    base: 'bg-emerald-900/30',
+    hover: 'hover:bg-emerald-900/50',
+    border: 'border-emerald-700/50',
+    text: 'text-emerald-100',
+    badgeBg: 'bg-emerald-700/60',
+    badgeText: 'text-emerald-100',
+    label: 'Canon Path',
   },
-  uneasy: {
+  divergence: {
     base: 'bg-amber-900/25',
     hover: 'hover:bg-amber-900/40',
     border: 'border-amber-700/50',
     text: 'text-amber-100',
     badgeBg: 'bg-amber-700/50',
     badgeText: 'text-amber-200',
-    label: 'Uneasy',
+    label: 'Divergence',
   },
-  suspicious: {
-    base: 'bg-orange-900/30',
-    hover: 'hover:bg-orange-900/50',
-    border: 'border-orange-600/60',
-    text: 'text-orange-100',
-    badgeBg: 'bg-orange-600/60',
-    badgeText: 'text-orange-100',
-    label: 'Suspicious',
+  character: {
+    base: 'bg-indigo-900/30',
+    hover: 'hover:bg-indigo-900/50',
+    border: 'border-indigo-700/50',
+    text: 'text-indigo-100',
+    badgeBg: 'bg-indigo-700/60',
+    badgeText: 'text-indigo-100',
+    label: 'Character',
   },
-  breakthrough: {
-    base: 'bg-rose-900/40',
-    hover: 'hover:bg-rose-900/60',
-    border: 'border-rose-500/70',
+  wildcard: {
+    base: 'bg-rose-900/30',
+    hover: 'hover:bg-rose-900/50',
+    border: 'border-rose-600/60',
     text: 'text-rose-100',
-    badgeBg: 'bg-rose-500/70',
+    badgeBg: 'bg-rose-600/60',
     badgeText: 'text-rose-50',
-    label: 'Breakthrough',
+    label: 'Wildcard',
   },
 };
 
@@ -123,6 +130,7 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
     pendingInput,
     choices,
     choicePrompt,
+    pendingQuestions,
     loreUpdates,
     storyState,
     sendChoice,
@@ -131,6 +139,17 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
     rewriteTurn,
     canUndo,
   } = story;
+
+  // Per-question answers for the meta-questions panel. Cleared on each new
+  // request_input arrival via parent hook resetting pendingQuestions.
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setQuestionAnswers({});
+  }, [pendingQuestions]);
+
+  const allQuestionsAnswered =
+    pendingQuestions.length === 0 ||
+    pendingQuestions.every((q) => Boolean(questionAnswers[q.question]));
 
   const [inputText, setInputText] = useState('');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -183,9 +202,6 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
   };
 
   const proseTail = useMemo(() => prose.slice(-200), [prose]);
-
-  // Show tier-themed buttons if at least one choice has a non-null tier.
-  const anyTier = choices.some(c => c.tier !== null);
 
   return (
     <div className="flex h-screen w-full bg-slate-950 overflow-hidden text-slate-100">
@@ -343,11 +359,22 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
         <div className="p-6 bg-gradient-to-t from-slate-950 via-slate-950 to-transparent">
           <div className="max-w-3xl mx-auto space-y-4">
 
-            {/* Choice prompt header */}
+            {/* Choice prompt header (legacy; usually empty for typed choices) */}
             {choicePrompt && choices.length > 0 && !isTyping && (
               <p className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
                 {choicePrompt}
               </p>
+            )}
+
+            {/* Meta-questions: shape the next chapter's tone/style */}
+            {pendingQuestions.length > 0 && !isTyping && (
+              <MetaQuestions
+                questions={pendingQuestions}
+                answers={questionAnswers}
+                onAnswer={(q, opt) =>
+                  setQuestionAnswers((prev) => ({ ...prev, [q]: opt }))
+                }
+              />
             )}
 
             {/* Choices */}
@@ -357,15 +384,17 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
                   <ChoiceButton
                     key={idx}
                     choice={choice}
-                    disabled={!isConnected}
+                    disabled={!isConnected || !allQuestionsAnswered}
                     onClick={() => {
                       if (pendingInput && pendingInput.interrupt_id === 'user_choice_selection') {
-                        submitInput(choice.text);
+                        submitInput({
+                          choice: choice.text,
+                          question_answers: questionAnswers,
+                        });
                       } else {
                         sendChoice(choice.text);
                       }
                     }}
-                    themed={anyTier}
                   />
                 ))}
               </div>
@@ -625,47 +654,39 @@ function ChoiceButton({
   choice,
   disabled,
   onClick,
-  themed,
 }: {
   choice: Choice;
   disabled: boolean;
   onClick: () => void;
-  themed: boolean;
 }) {
-  // Flat-grey when no tier dimension is in play.
-  if (!themed || choice.tier === null) {
-    return (
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        className="p-3 text-sm text-left bg-slate-800/80 hover:bg-indigo-600/40 border border-slate-700 rounded-lg transition-colors text-slate-200 disabled:opacity-50"
-      >
-        {choice.text}
-      </button>
-    );
-  }
-
-  const theme = TIER_THEMES[choice.tier];
-  const isBreakthrough = choice.tier === 'breakthrough';
+  const theme = CHOICE_THEMES[choice.tier];
+  const isWildcard = choice.tier === 'wildcard';
 
   const inner = (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`relative w-full p-3 text-sm text-left rounded-lg transition-colors border ${theme.base} ${theme.hover} ${theme.border} ${theme.text} disabled:opacity-50`}
+      className={`relative w-full p-3 text-sm text-left rounded-lg transition-colors border ${theme.base} ${theme.hover} ${theme.border} ${theme.text} disabled:opacity-50 disabled:cursor-not-allowed`}
     >
-      <span className="flex items-start gap-2">
-        <span className="flex-1">{choice.text}</span>
-        <span
-          className={`shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full ${theme.badgeBg} ${theme.badgeText}`}
-        >
-          {theme.label}
+      <span className="flex flex-col gap-1">
+        <span className="flex items-start gap-2">
+          <span className="flex-1 leading-snug">{choice.text}</span>
+          <span
+            className={`shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full ${theme.badgeBg} ${theme.badgeText}`}
+          >
+            {theme.label}
+          </span>
         </span>
+        {choice.tied_event && (
+          <span className="text-[10px] uppercase tracking-widest text-slate-500">
+            ties to: <span className="text-slate-400">{choice.tied_event}</span>
+          </span>
+        )}
       </span>
     </button>
   );
 
-  if (isBreakthrough) {
+  if (isWildcard) {
     return (
       <motion.div
         animate={{ boxShadow: [
@@ -681,6 +702,54 @@ function ChoiceButton({
     );
   }
   return inner;
+}
+
+function MetaQuestions({
+  questions,
+  answers,
+  onAnswer,
+}: {
+  questions: ChapterQuestion[];
+  answers: Record<string, string>;
+  onAnswer: (question: string, option: string) => void;
+}) {
+  return (
+    <div className="space-y-3 mb-4">
+      <p className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
+        Shape the next chapter
+      </p>
+      {questions.map((q) => (
+        <div
+          key={q.question}
+          className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2"
+        >
+          <div className="text-sm text-slate-200 font-medium">{q.question}</div>
+          {q.context && (
+            <div className="text-xs text-slate-500 italic">{q.context}</div>
+          )}
+          <div className="flex flex-wrap gap-2 pt-1">
+            {q.options.map((opt) => {
+              const selected = answers[q.question] === opt;
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => onAnswer(q.question, opt)}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                    selected
+                      ? 'bg-indigo-600/40 border-indigo-500 text-indigo-100'
+                      : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700/60'
+                  }`}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function RewriteModal({

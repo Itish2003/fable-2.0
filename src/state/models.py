@@ -101,7 +101,25 @@ class FableAgentState(BaseModel):
     # Phase 9/12: Long-Term Memory & User Intent
     chapter_summaries: List[str] = Field(default_factory=list, description="Rolling summaries of previous chapters.")
     last_user_choice: str = Field(default="", description="The last action the user chose.")
+    last_user_question_answers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description=(
+            "Per-meta-question answers from the chapter's questions[] panel. "
+            "Written by user_choice_input_node on resume; consumed by the "
+            "storyteller's before_model_callback next turn to shape tone/style."
+        ),
+    )
     last_story_text: str = Field(default="", description="The raw prose generated in the previous turn.")
+    last_chapter_meta: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Structured tail of the previous storyteller chapter — a "
+            "ChapterOutput.model_dump() (summary, choices, timeline, "
+            "stakes_tracking, etc.). Populated by the WS runner after "
+            "parse_chapter_tail succeeds; consumed by Phase B for choice "
+            "rendering. None when the last chapter had no parseable JSON tail."
+        ),
+    )
 
     # Auditor violation history (written by the report_violation tool)
     violation_log: List[Dict[str, Any]] = Field(default_factory=list, description="Audit trail of canon/tone violations flagged during play.")

@@ -16,9 +16,24 @@ export type LoreStatus = {
 
 export type SuspicionTier = 'oblivious' | 'uneasy' | 'suspicious' | 'breakthrough';
 
+// Phase B: typed-choice taxonomy from the storyteller's ChapterOutput tail.
+// One of each tier per chapter (canon-path / divergence / character-driven /
+// wildcard). Replaces the previous SuspicionTier-based shape.
+export type ChoiceTier = 'canon' | 'divergence' | 'character' | 'wildcard';
+
 export type Choice = {
   text: string;
-  tier: SuspicionTier | null;
+  tier: ChoiceTier;
+  tied_event?: string | null;
+};
+
+// Meta-question for the next chapter's tone/style. Rendered alongside the
+// 4 plot-advancing choices; answers are bundled into the resume payload.
+export type ChapterQuestion = {
+  question: string;
+  context: string;
+  type: 'choice';
+  options: string[];
 };
 
 export type ActiveCharacter = {
@@ -50,7 +65,47 @@ export type ProseFragment = {
   text: string;
 };
 
-// ─── Inbound WS message discriminated union (covers ALL 8 backend types) ─────
+// Phase A: structured tail emitted by the Storyteller (ChapterOutput model
+// in src/state/chapter_output.py). The frontend declares the channel here
+// so the exhaustiveness check stays green; Phase B will replace the no-op
+// handler below with real choice/timeline rendering.
+export type ChapterMetaData = {
+  summary: string;
+  choices: Array<{
+    text: string;
+    tier: 'canon' | 'divergence' | 'character' | 'wildcard';
+    tied_event: string | null;
+  }>;
+  choice_timeline_notes: {
+    upcoming_event_considered: string | null;
+    canon_path_choice: number | null;
+    divergence_choice: number | null;
+  };
+  timeline: {
+    chapter_start_date: string;
+    chapter_end_date: string;
+    time_elapsed: string;
+    canon_events_addressed: string[];
+    divergences_created: string[];
+  };
+  canon_elements_used: string[];
+  power_limitations_shown: string[];
+  stakes_tracking: {
+    costs_paid: string[];
+    near_misses: string[];
+    power_debt_incurred: Record<string, string>;
+    consequences_triggered: string[];
+  };
+  character_voices_used: string[];
+  questions: Array<{
+    question: string;
+    context: string;
+    type: 'choice';
+    options: string[];
+  }>;
+};
+
+// ─── Inbound WS message discriminated union (covers ALL backend types) ─────
 export type WsMessage =
   | { type: 'text_delta'; text: string; author?: string }
   | { type: 'request_input'; interrupt_id: string; message: string }
@@ -80,6 +135,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
   const [pendingInput, setPendingInput] = useState<RequestInputData | null>(null);
   const [choices, setChoices] = useState<Choice[]>([]);
   const [choicePrompt, setChoicePrompt] = useState<string>('');
+  const [pendingQuestions, setPendingQuestions] = useState<ChapterQuestion[]>([]);
   const [loreUpdates, setLoreUpdates] = useState<LoreStatus[]>([]);
   const [setupComplete, setSetupComplete] = useState(isResumed);
   const [invocationHistory, setInvocationHistory] = useState<string[]>([]);
@@ -148,28 +204,31 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           if (data.interrupt_id === 'user_choice_selection') {
             try {
               const parsed = JSON.parse(data.message) as {
-                prompt?: string;
-                choices?: Array<{ text: string; tier: Choice['tier'] }>;
+                choices?: Array<{
+                  text: string;
+                  tier: ChoiceTier;
+                  tied_event?: string | null;
+                }>;
+                questions?: ChapterQuestion[];
               };
               const incoming = Array.isArray(parsed.choices) ? parsed.choices : [];
-              // Defensively normalize: legacy paths may still emit bare strings.
-              const normalized: Choice[] = incoming.map((c: unknown) => {
-                if (typeof c === 'string') return { text: c, tier: null };
-                if (c && typeof c === 'object' && 'text' in c) {
-                  const obj = c as { text: string; tier?: Choice['tier'] };
-                  return { text: obj.text, tier: obj.tier ?? null };
-                }
-                return { text: String(c), tier: null };
-              });
+              const normalized: Choice[] = incoming.map((c) => ({
+                text: String(c.text ?? ''),
+                tier: c.tier,
+                tied_event: c.tied_event ?? null,
+              }));
               setChoices(normalized);
-              setChoicePrompt(parsed.prompt ?? '');
+              setChoicePrompt('');
+              setPendingQuestions(Array.isArray(parsed.questions) ? parsed.questions : []);
             } catch {
               setChoices([]);
               setChoicePrompt('');
+              setPendingQuestions([]);
             }
           } else {
             setChoices([]);
             setChoicePrompt('');
+            setPendingQuestions([]);
           }
 
           // Ensure prose has a clean break before the prompt
@@ -207,6 +266,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           setPendingInput(null);
           setChoices([]);
           setChoicePrompt('');
+          setPendingQuestions([]);
           break;
 
         case 'rewrite_started':
@@ -217,6 +277,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           setPendingInput(null);
           setChoices([]);
           setChoicePrompt('');
+          setPendingQuestions([]);
           break;
 
         case 'error':
@@ -299,15 +360,24 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
     wsRef.current.send(JSON.stringify({ message }));
   }, [setProseAndFragment]);
 
-  const submitInput = useCallback((text: string) => {
+  const submitInput = useCallback((
+    payload: string | { choice: string; question_answers?: Record<string, string> },
+  ) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !pendingInput) return;
+
+    const isStructured = typeof payload !== 'string';
+    const previewText = isStructured ? payload.choice : payload;
+    const resumePayload: string | { choice: string; question_answers: Record<string, string> } =
+      isStructured
+        ? { choice: payload.choice, question_answers: payload.question_answers ?? {} }
+        : payload;
 
     if (
       pendingInput.interrupt_id !== 'setup_lore_dump' &&
       pendingInput.interrupt_id !== 'setup_configuration' &&
       pendingInput.interrupt_id !== 'setup_world_primer'
     ) {
-      setProseAndFragment('system', `**[Reply]**: ${text}\n\n`);
+      setProseAndFragment('system', `**[Reply]**: ${previewText}\n\n`);
     }
 
     if (pendingInput.interrupt_id === 'setup_configuration') {
@@ -324,10 +394,11 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
     wsRef.current.send(JSON.stringify({
       interrupt_id: pendingInput.interrupt_id,
-      resume_payload: text,
+      resume_payload: resumePayload,
     }));
 
     setPendingInput(null);
+    setPendingQuestions([]);
   }, [pendingInput, setProseAndFragment]);
 
   const undoTurn = useCallback(() => {
@@ -373,6 +444,7 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
     loreUpdates,
     storyState,
     setupComplete,
+    pendingQuestions,
     sendChoice,
     submitInput,
     undoTurn,

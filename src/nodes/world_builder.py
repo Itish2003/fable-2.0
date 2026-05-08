@@ -16,7 +16,7 @@ from typing import Any, AsyncGenerator
 
 from google.adk.workflow import node
 from google.adk.agents.context import Context
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 from google.adk.events.request_input import RequestInput
 from google.genai import types
 
@@ -122,7 +122,6 @@ async def run_world_builder(
     # state (story_premise + last_story_text both present) and short-circuit
     # to the turn loop via the "skip" route.
     if ctx.state.get("story_premise") and ctx.state.get("last_story_text"):
-        from google.adk.events import Event, EventActions
         logger.info("world_builder: post-setup turn; routing skip -> intent_router")
         yield Event(actions=EventActions(route="skip"))
         return
@@ -266,7 +265,6 @@ async def run_world_builder(
             f"\"Tatsuya's abilities\"), generate a research target for that character "
             f"specifically — not just the universe. Their full power dossier is required."
         )
-        from google.adk.events import EventActions
         yield Event(
             content=types.Content(
                 role="user",

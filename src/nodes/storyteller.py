@@ -622,13 +622,36 @@ async def _inject_active_character_lore(
     active_names = list(active_characters.keys())
 
     chapter_count = int(state.get("chapter_count", 1) or 1)
-    # The chapter we are about to write is the (chapter_count)th completed
-    # chapter when chapter_count is incremented post-archivist; conservative
-    # interpretation: treat chapter_count as the chapter being authored now.
     current_chapter = chapter_count
     _tick_pending_consequences(state, current_chapter)
 
     blocks: list[str] = []
+
+    # 0. PROTAGONIST FRAMEWORK — the OC's full premise + setup-wizard answers.
+    # WITHOUT this block the model defaults to canonical-universe protagonists
+    # (e.g. writes a Tatsuya Shiba POV chapter for a Mahouka × JJK story even
+    # though the OC is Kageaki Ren). This is the load-bearing block.
+    premise = (state.get("story_premise") or "").strip()
+    setup_conv = state.get("setup_conversation") or []
+    if premise:
+        framework_lines = [
+            "PROTAGONIST FRAMEWORK — this is the ONLY protagonist of the story.",
+            "Every chapter is from this character's POV (or about them in third-person limited).",
+            "Do NOT write a chapter focused on canon characters; the canon characters orbit",
+            "around this OC. The framework below is HARD CREATIVE DIRECTION, on par with canon:",
+            "",
+            premise[:6000],
+        ]
+        if isinstance(setup_conv, list) and setup_conv:
+            framework_lines.append("")
+            framework_lines.append("─── Setup wizard answers (additional creative direction) ───")
+            for entry in setup_conv:
+                if not isinstance(entry, dict):
+                    continue
+                role = entry.get("role", "?")
+                content = str(entry.get("content", ""))[:400]
+                framework_lines.append(f"[{role.upper()}] {content}")
+        blocks.append("\n".join(framework_lines))
 
     # 1. Known facts about active characters (existing behavior)
     if active_characters:

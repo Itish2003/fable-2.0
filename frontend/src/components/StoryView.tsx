@@ -256,7 +256,15 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+          {/* Pane title — confirms which tab is active independent of the
+             tab-strip styling. If this text doesn't change when you click
+             a tab, the click never reached React. */}
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold pb-2 border-b border-slate-800 mb-2 flex items-center gap-2">
+            {sidebarTab === 'lore' && (<><Activity className="w-3 h-3 text-emerald-400" /><span>Lore Stream</span></>)}
+            {sidebarTab === 'cast' && (<><Users className="w-3 h-3 text-indigo-400" /><span>Active Cast</span><span className="text-slate-700">·</span><span className="text-slate-400 normal-case tracking-normal">{storyState?.active_characters.length ?? 0} on stage</span></>)}
+            {sidebarTab === 'divergences' && (<><GitBranch className="w-3 h-3 text-rose-400" /><span>Timeline Divergences</span><span className="text-slate-700">·</span><span className="text-slate-400 normal-case tracking-normal">{storyState?.active_divergences.length ?? 0} active</span></>)}
+          </div>
           {sidebarTab === 'lore' && <LoreStreamPane loreUpdates={loreUpdates} />}
           {sidebarTab === 'cast' && <CastPane characters={storyState?.active_characters ?? null} />}
           {sidebarTab === 'divergences' && (
@@ -481,10 +489,10 @@ function SidebarTabButton({
   return (
     <button
       onClick={onClick}
-      className={`flex-1 px-3 py-2 flex items-center justify-center gap-1.5 transition-colors border-b-2 ${
+      className={`flex-1 px-3 py-2.5 flex items-center justify-center gap-1.5 transition-all border-b-2 cursor-pointer select-none ${
         active
-          ? 'border-indigo-500 text-indigo-300 bg-slate-800'
-          : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'
+          ? 'border-indigo-500 text-indigo-200 bg-indigo-500/10 font-semibold'
+          : 'border-transparent text-slate-500 hover:text-slate-200 hover:bg-slate-800/60'
       }`}
     >
       {icon}
@@ -504,7 +512,7 @@ function SidebarTabButton({
 
 function LoreStreamPane({ loreUpdates }: { loreUpdates: LoreStatus[] }) {
   if (loreUpdates.length === 0) {
-    return <EmptyState text="No lore updates yet" />;
+    return <EmptyState text="No lore updates yet — the swarm reports here when the archivist commits new entities." accentClass="text-emerald-500/70" />;
   }
   return (
     <AnimatePresence>
@@ -531,7 +539,7 @@ function LoreStreamPane({ loreUpdates }: { loreUpdates: LoreStatus[] }) {
 
 function CastPane({ characters }: { characters: Array<{ name: string; trust: number; disposition: string; present: boolean }> | null }) {
   if (!characters || characters.length === 0) {
-    return <EmptyState text="No characters in scene" />;
+    return <EmptyState text="No characters on stage yet — they appear after the first chapter's archivist pass." accentClass="text-indigo-500/70" />;
   }
   return (
     <>
@@ -558,7 +566,7 @@ function CastPane({ characters }: { characters: Array<{ name: string; trust: num
 
 function DivergencesPane({ divergences }: { divergences: Array<{ event_id: string; description: string; ripple_count: number }> | null }) {
   if (!divergences || divergences.length === 0) {
-    return <EmptyState text="No timeline divergences" />;
+    return <EmptyState text="No timeline divergences — canon is intact so far. Pick a wildcard or divergence choice to alter it." accentClass="text-rose-500/70" />;
   }
   return (
     <>
@@ -581,9 +589,9 @@ function DivergencesPane({ divergences }: { divergences: Array<{ event_id: strin
   );
 }
 
-function EmptyState({ text }: { text: string }) {
+function EmptyState({ text, accentClass }: { text: string; accentClass?: string }) {
   return (
-    <div className="text-xs text-slate-500 italic text-center pt-8">{text}</div>
+    <div className={`text-xs text-slate-500 italic text-center pt-6 px-3 ${accentClass ?? ''}`}>{text}</div>
   );
 }
 

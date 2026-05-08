@@ -228,6 +228,29 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                     "text": last_story,
                 }, session_id)
 
+            # Re-emit chapter_meta so the choice picker + meta-questions
+            # render after a reload. Two cases this covers:
+            #   (a) Player reloaded mid-game with a chapter waiting for
+            #       their choice. Without this, choices vanish on F5.
+            #   (b) Previous workflow crashed mid-archivist (e.g. the
+            #       stale-session compaction race we just fixed) before
+            #       runner._emit_chapter_meta could fire. The auditor
+            #       had already parsed the JSON tail into
+            #       state.last_chapter_meta, so the choices DO exist --
+            #       just never reached the WS.
+            # We skip when the user has already submitted a choice
+            # (state.last_user_choice non-empty) -- that means a NEW
+            # chapter is in flight and the frontend will get fresh
+            # chapter_meta when that turn completes.
+            cb_state = existing.state or {}
+            chap_meta = cb_state.get("last_chapter_meta")
+            last_choice = (cb_state.get("last_user_choice") or "").strip()
+            if chap_meta and not last_choice:
+                await manager.send_personal_message({
+                    "type": "chapter_meta",
+                    "data": chap_meta,
+                }, session_id)
+
             # Restore pending choices if the session is suspended at a HITL.
             # Scan events in reverse — the last unresolved RequestInput is always
             # at the tail (a resolved one has a response event after it).

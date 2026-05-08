@@ -6,36 +6,73 @@ from src.state.models import FableAgentState
 
 from src.nodes.storyteller import create_storyteller_node
 from src.nodes.archivist import create_archivist_node
+from src.nodes.summarizer import create_summarizer_node
 from src.nodes.auditor import run_auditor
 from src.nodes.world_builder import run_world_builder
 from src.nodes.recovery import run_recovery
 
 from src.nodes.init_research import create_query_planner, create_lore_hunter, parse_queries
-from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state, create_fallback_extractor, fallback_injector
+from src.nodes.lore_keeper import (
+    create_lore_keeper,
+    inject_lore_to_state,
+    create_fallback_extractor,
+    fallback_injector,
+)
 
 # Phase 9: Narrative Intelligence Nodes
 from src.nodes.intent_router import run_intent_router
-from src.nodes.summarizer import summarizer_node
+
+# Idiomatic-ADK refactor: declarative LlmAgents with output_schema +
+# downstream FunctionNode merge nodes. The merge nodes apply the parsed
+# schema artifacts to canonical state fields deterministically.
+from src.nodes.storyteller_merge import storyteller_merge
+from src.nodes.archivist_merge import archivist_merge
+from src.nodes.summarizer_persist import summarizer_persist
 
 
 def build_fable_workflow() -> Workflow:
     """
     Constructs the ADK 2.0 deterministic Graph-Based Workflow.
-    This replaces the manual `run_pipeline` loop from V1.
+
+    Chapter generation pipeline (post-refactor):
+
+        intent_router
+          → storyteller          [LlmAgent + output_schema=StorytellerOutput]
+          → storyteller_merge    [FunctionNode: prepend # Chapter N header]
+          → auditor              [FunctionNode: structural + content audits]
+              ↓ "passed"
+              → archivist        [LlmAgent + output_schema=ArchivistDelta]
+              → archivist_merge  [FunctionNode: apply delta to canonical state]
+              → summarizer       [LlmAgent + output_schema=ChapterSummaryOutput]
+              → summarizer_persist [FunctionNode: append summary, embed]
+              ↓ "failed"
+              → storyteller     [retry, up to 3]
+              ↓ "recovery"
+              → recovery_node   TERMINAL
+
+    Three LLM calls per chapter (storyteller, archivist, summarizer);
+    three FunctionNode merges that are pure deterministic state writes.
+    No tool loops, no exit conditions, no parsers.
     """
 
-    # 1. Existing Nodes
+    # 1. Story-loop nodes (declarative LlmAgents + their merge passes).
     storyteller_agent = create_storyteller_node()
     archivist_agent = create_archivist_node()
+    summarizer_agent = create_summarizer_node()
 
     storyteller_node = build_node(storyteller_agent)
     archivist_node = build_node(archivist_agent)
+    summarizer_node = build_node(summarizer_agent)
+
+    storyteller_merge_node = storyteller_merge
+    archivist_merge_node = archivist_merge
+    summarizer_persist_node = summarizer_persist
 
     auditor_node = run_auditor
     world_builder_node = run_world_builder
     recovery_node = FunctionNode(func=run_recovery, name="recovery")
 
-    # 2. New Phase 8 Swarm Nodes
+    # 2. Phase 8 Swarm Nodes (lore-init pipeline; unchanged).
     query_planner_agent = create_query_planner()
     lore_hunter_agent = create_lore_hunter()
     lore_keeper_agent = create_lore_keeper()
@@ -43,117 +80,81 @@ def build_fable_workflow() -> Workflow:
     query_planner_node = build_node(query_planner_agent)
     query_parser_node = parse_queries
 
-    # CRITICAL: Configure the agent for parallel fan-out
     lore_hunter_agent.parallel_worker = True
     lore_hunter_swarm = build_node(lore_hunter_agent)
 
-    # The JoinNode automatically waits for all instances of the swarm to finish
-    # and aggregates their outputs into a list for the Lore Keeper
     swarm_join = JoinNode(name="swarm_join")
 
     lore_keeper_node = build_node(lore_keeper_agent)
     lore_keeper_injector = inject_lore_to_state
 
-    # Fallback nodes
     fallback_extractor_agent = create_fallback_extractor()
     fallback_extractor_node = build_node(fallback_extractor_agent)
     fallback_injector_node = fallback_injector
 
-    # Phase 9 Nodes
+    # Phase 9: per-turn router.
     intent_router_node = run_intent_router
 
-    # Phase H follow-up: the summarizer was previously LlmAgent + parser-@node.
-    # Now summarizer_node does the LLM call directly (see src/nodes/summarizer.py),
-    # so the shim agent is gone. archivist_node -> summarizer_node directly.
-    summarizer_parser_node = summarizer_node
-
-    # Phase B (Option A): user_choice_input removed entirely. The
-    # workflow terminates after summarizer; the WS runner emits a
-    # chapter_meta frame carrying state.last_chapter_meta. The frontend
-    # renders the picker WITHOUT a HITL pause. Each user choice triggers
-    # a fresh runner.run_async(new_message=Content(...), state_delta={...})
-    # which gets a NEW invocation_id -- so per-chapter rewind/rewrite
-    # finally works.
-
-    # 3. Define the Graph Edges (State Machine Logic)
-
+    # 3. Edges — the state machine.
     edges = [
-        # Boot Phase (HITL)
+        # Boot (HITL via world_builder).
         (START, world_builder_node),
 
         # WorldBuilder routes:
         #   setup -> query_planner (first run; runs lore_dump+wizard+config+research swarm)
-        #   skip  -> intent_router (subsequent chapters; world is already built)
-        # The skip route is what makes Option A work: each chapter starts
-        # with a fresh invocation_id at run_async time, world_builder
-        # detects post-setup state and short-circuits to the turn loop.
+        #   skip  -> intent_router (subsequent chapters; world already built)
         (world_builder_node, {
             "setup": query_planner_node,
             "skip": intent_router_node,
         }),
 
-        # Parse the JSON response into a Python List
+        # Setup pipeline (unchanged).
         (query_planner_node, query_parser_node),
-
-        # The list is passed to the Parallel Worker, which fans out
         (query_parser_node, lore_hunter_swarm),
-
-        # The parallel tasks feed into the Join node
         (lore_hunter_swarm, swarm_join),
-
-        # The Join node hands the aggregated list to the Keeper
         (swarm_join, lore_keeper_node),
-
-        # Keeper evaluates state
         (lore_keeper_node, lore_keeper_injector),
-
-        # Fallback routing if keeper hallucinated
         (lore_keeper_injector, {
             "fallback": fallback_extractor_node,
-            "success": intent_router_node
+            "success": intent_router_node,
         }),
-
         (fallback_extractor_node, fallback_injector_node),
         (fallback_injector_node, {
-            "success": intent_router_node
+            "success": intent_router_node,
         }),
 
-        # Intent Router decides: continue story OR branch to research swarm
+        # Per-turn intent routing.
         (intent_router_node, {
             "story": storyteller_node,
-            "research": query_planner_node
+            "research": query_planner_node,
         }),
 
-        # Core Story Loop
-        (storyteller_node, auditor_node),
-        # Auditor routes:
-        #   passed   -> archivist (success path; resets retry counter)
-        #   failed   -> storyteller (retry; counter is bumped in auditor)
-        #   recovery -> recovery_node (after 3 consecutive failures)
+        # ─────────────────── chapter generation ─────────────────
+        # Storyteller emits StorytellerOutput (prose + chapter_meta) into
+        # state.storyteller_output via output_key. storyteller_merge
+        # prepends the deterministic "# Chapter N" header from
+        # state.chapter_count and writes last_story_text +
+        # last_chapter_meta. Auditor validates structurally + content.
+        (storyteller_node, storyteller_merge_node),
+        (storyteller_merge_node, auditor_node),
         (auditor_node, {
             "passed": archivist_node,
             "failed": storyteller_node,
-            "recovery": recovery_node
+            "recovery": recovery_node,
         }),
 
-        # Recovery: writes a fallback prose into state.last_story_text
-        # and terminates. Frontend will render generic fallback choices
-        # from runner's chapter_meta frame (synthesised when
-        # state.last_chapter_meta is missing).
-        # (recovery_node has no outgoing edge -> terminal)
-
-        # Narrative Intelligence: Summarize, then TERMINATE.
-        # No HITL, no loop-back. The runner emits chapter_meta after the
-        # workflow exits; the next user choice triggers a fresh
-        # run_async with state_delta carrying last_user_choice.
-        (archivist_node, summarizer_parser_node),
-        # summarizer_parser_node has no outgoing edge -> terminal
+        # Archivist emits ArchivistDelta into state.archivist_delta;
+        # archivist_merge applies it deterministically. Then summarizer
+        # emits ChapterSummaryOutput into state.summary_output;
+        # summarizer_persist appends to state.chapter_summaries and
+        # writes the chapter_summary::<N> LoreEmbedding.
+        (archivist_node, archivist_merge_node),
+        (archivist_merge_node, summarizer_node),
+        (summarizer_node, summarizer_persist_node),
+        # summarizer_persist_node is TERMINAL.
+        # recovery_node is TERMINAL.
     ]
 
-    # 4. Create the Workflow Node.
-    # Nodes are inferred from edges by WorkflowGraph.model_post_init — do
-    # NOT pass nodes/sub_nodes explicitly. recovery_node is reachable via
-    # the auditor's "recovery" route above.
     fable_graph = Workflow(
         name="fable_main_workflow",
         edges=edges,

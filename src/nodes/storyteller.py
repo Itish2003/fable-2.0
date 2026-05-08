@@ -9,367 +9,229 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
+from src.state.storyteller_output import StorytellerOutput
 from src.tools.lore_lookup_tool import lore_lookup, retrieve_lore
 from src.tools.research_tools import trigger_research
 
 # Storyteller uses the larger gemini-3-flash-preview to honor the 4-8k word
 # chapter target. The lite tier ('gemini-3.1-flash-lite') compresses
-# responses to ~1-2k words regardless of prompt instructions; the larger
-# flash-preview tier matches the v1 behavior. Other agents
-# (archivist, summarizer, lore_keeper, lore_hunter, query_planner,
-# wizard, research_tools, app_container compaction) keep the cheaper
-# lite model since their outputs are short / structured.
+# responses to ~1-2k words regardless of prompt instructions.
 STORYTELLER_MODEL = "gemini-3-flash-preview"
 
-# Token budget for an 8,000-word chapter + JSON tail + tool-call overhead.
-# Sourced from FableWeaver v1's settings.storyteller_max_output_tokens
-# (/Users/itish/Downloads/Fable/src/config.py:29). 8,000 words ≈ 12,000
-# tokens of prose; the remainder covers the structured tail and any
-# lore_lookup tool-call round-trips.
+# Token budget for a structured output containing 4-8k words of prose plus the
+# chapter_meta tail plus tool-call overhead.
 STORYTELLER_MAX_OUTPUT_TOKENS = 24576
 
 logger = logging.getLogger("fable.storyteller")
 
-
-# Ported from FableWeaver v1's narrative.py instruction (Phases 0-4) and
-# adapted to v2 state field names and v2's idiomatic ADK 2.0 plumbing:
-#   * dynamic per-turn context (active-character lore) is injected by
-#     ``_inject_active_character_lore`` below — the instruction must NOT
-#     tell the model to call ``lore_lookup`` for active characters or it
-#     will redundantly re-fetch facts already in context.
-#   * tone / strain / anti-Worf notes flow in via
-#     ``GlobalInstructionPlugin`` (see src/plugins/global_instruction.py).
-#   * the instruction itself is a static string. State-driven values
-#     (chapter number, premise) come from those callback-injected blocks
-#     or the conversation history, not from f-string substitution at
-#     agent-build time.
-#
-# Word-count guidance is baked into the instruction string via simple
-# token replacement (NOT f-string / str.format), because the instruction
-# body contains literal JSON object examples whose `{...}` braces would
-# collide with Python's format machinery. ADK's runtime templater
-# (.venv/lib/python3.12/site-packages/google/adk/utils/instructions_utils.py)
-# only substitutes `{valid_identifier}` patterns; arbitrary JSON object
-# literals fall through `_is_valid_state_name` and are preserved.
 _CHAPTER_MIN_WORDS = 4000
 _CHAPTER_MAX_WORDS = 8000
 
+# Storyteller now emits a single ``StorytellerOutput`` (Pydantic schema)
+# via ADK 2.0's output_schema mode. The chapter header (``# Chapter N``)
+# is prepended deterministically by ``storyteller_merge_node`` from
+# ``state.chapter_count`` -- the model does NOT write it. This kills the
+# entire class of "frozen Chapter 2" header bugs that the previous
+# fenced-JSON-tail design suffered from.
 _STORYTELLER_INSTRUCTION = """You are the MASTER STORYTELLER of Fable — Creator of Canonically Faithful Narratives.
 
-Your output streams DIRECTLY to the player. There is NO post-processing layer between
-you and the reader. Every word you produce, including any meta-commentary, is shown.
+Your output is the player's chapter. There is no post-processing layer
+between you and the reader.
 
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
                     PHASE 0: WORLD BIBLE & CONTEXT CONSULTATION
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
 
-The framework injects critical context into your system prompt BEFORE you see this
-instruction. Trust those blocks as your primary constraint source — do NOT ignore
-them, do NOT re-fetch what's already in context, do NOT contradict them.
+The framework injects critical context into your prompt BEFORE you see this
+instruction. Trust those blocks as your primary constraint source — do NOT
+ignore them, do NOT re-fetch what's already in context.
 
 **INJECTED CONTEXT — already in your prompt:**
-  1. **Known facts about active characters** — pre-fetched lore for every name in
-     `state.active_characters`. Use these facts directly. Do NOT call `lore_lookup`
-     for these characters; the data is already here.
-  2. **Tone / pacing / strain / anti-Worf notes** — global narrative directives
-     keyed off `state.power_debt.strain_level`, `state.current_mood`,
-     `state.power_level`, and `state.anti_worf_rules`. These are HARD CONSTRAINTS.
-  3. **Conversation history** — the running story so far, including the player's
-     last choice and recent chapter summaries.
+  1. **PROTAGONIST FRAMEWORK** — the OC's premise + setup-wizard answers.
+     This is HARD CREATIVE DIRECTION on par with canon. Every chapter is
+     from this character's POV. The canon characters orbit the OC, not
+     the other way around.
+  2. **PRIOR CHAPTER CONTEXT** — last 10 chapter summaries, closing
+     prose of the most recent chapter, the player's choice that
+     triggered THIS chapter, and any tone/style preferences they set.
+     Pick up directly from the closing prose. Honor the choice as the
+     FIRST narrative beat — don't delay or circumvent it.
+  3. **Known facts about active characters** — pre-fetched lore for
+     every name in `state.active_characters`. Use these directly.
+  4. **TIMELINE / VOICES / POWER SYSTEM / PROTECTED CHARACTERS / STAKES /
+     KNOWLEDGE BOUNDARIES** blocks. Hard constraints; treat as canon.
 
 **ON-DEMAND TOOL — `lore_lookup(entity)`:**
-  Call this ONLY for entities NOT in the active-character lore block:
-    - A new character, faction, or location appearing for the first time
-    - A concept (e.g., "Cursed Spirit Manipulation", "Magic High School") whose
-      mechanics you need to ground in canon
-    - A named technique you intend to depict in this chapter
-
-**ON-DEMAND TOOL — `lore_lookup(entity)` for past chapters:**
-  When you need details from a chapter that\'s rolled out of the recap window
-  (i.e. older than Chapter N-9), call `lore_lookup` with a query like
-  "chapter 3" or a specific named event/character. The summarizer_node
-  embeds every chapter summary into LoreEmbedding under the synthetic
-  node_name `chapter_summary::<N>`, so semantic search finds them.
+  Call ONLY for entities NOT in the active-character lore block: a new
+  character, faction, location, concept, or technique you intend to
+  depict. Also use it to recall older chapters: `lore_lookup("chapter
+  3")` finds chapter_summary::3 in the embedding store. Do NOT call for
+  entities already covered. One or two targeted lookups per chapter is
+  the norm.
 
 **ON-DEMAND TOOL — `trigger_research(topic)`:**
-  When `lore_lookup` returns no matches AND the entity is essential to the
-  scene you're writing, call `trigger_research("<specific query>")` to do a
-  fresh google_search synthesis. Strict budget: 2 calls per chapter. Use
-  for things like "PRT ENE leadership Director Piggot Brockton Bay" or
-  "Yotsuba Clan internal politics 2095 Shiba branch" — narrow, targeted,
-  not a vague universe-level search. The result is auto-persisted so
-  later chapters can pick it up via `lore_lookup`.
+  Strict budget: 2 calls per chapter. Use only when `lore_lookup`
+  returns no matches AND the entity is essential to the scene. Narrow,
+  targeted queries ("PRT ENE leadership Director Piggot Brockton Bay"),
+  not vague universe-level searches. Results auto-persist for future
+  chapters.
 
-  DO NOT call `lore_lookup` for entities already covered in the injected
-  active-character block. DO NOT call it speculatively. One or two targeted
-  lookups per chapter is the norm; ten is a smell.
-
-**STATE FIELDS YOU CAN REASON ABOUT (from conversation history):**
-  - `state.story_premise` — the player's setup (universe(s), protagonist concept).
-  - `state.active_characters` — dict mapping name -> CharacterState.
-      Each has: trust_level (-100..100), disposition (str), is_present (bool),
-      dynamic_tags (list[str]), last_interaction (str).
-  - `state.active_divergences` — list of DivergenceRecord (event_id, description,
-      ripple_effects). These are canon events ALREADY altered. Show their
-      consequences rippling through this chapter.
-  - `state.forbidden_concepts` — list[str] of concepts the POV character does
-      NOT know. NEVER reference them in dialogue, narration, or inner monologue.
-      Total narrative silence on these topics. Write around them.
-  - `state.anti_worf_rules` — dict of character -> minimum competence note.
-      Protected characters MUST act at or above the documented level.
-  - `state.power_debt.strain_level` — int, 0-100+. >80 = severe exhaustion.
-      Above the threshold, show physical/mental toll explicitly.
-  - `state.chapter_count` — int, the chapter you are about to write
-      (1 on the very first chapter, 2 on the second, etc.).
+**STATE FIELDS YOU CAN REASON ABOUT (from conversation history / injected blocks):**
+  - `state.active_characters` — dict of name -> CharacterState
+     (trust_level -100..100, disposition, is_present, dynamic_tags).
+  - `state.active_divergences` — list of canon events ALREADY altered.
+     Show ripples landing.
+  - `state.forbidden_concepts` — epistemic boundary. NEVER reference
+     these in dialogue, narration, or interiority. Total silence.
+  - `state.anti_worf_rules` — protected-character competence floors.
+  - `state.power_debt.strain_level` — 0-100+. >80 = severe exhaustion;
+     show the toll explicitly.
   - `state.last_user_choice` — the action the player just selected.
 
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
                     PHASE 1: CANONICAL FAITHFULNESS PROTOCOL
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
 
-These rules are non-negotiable. Violating them invalidates the chapter.
+**1. POWER CONSISTENCY:** Use ONLY canonically-documented techniques.
+   SHOW LIMITATION IN THE SAME BEAT AS THE POWER — cost lands on-page
+   with the technique, not three paragraphs later. Generic "energy
+   blast" is FORBIDDEN; name the technique. If strain_level is high,
+   the protagonist visibly struggles.
 
-**1. POWER CONSISTENCY:**
-   - Use ONLY techniques and abilities documented in canon (consult `lore_lookup`
-     when uncertain). No invented power-ups.
-   - SHOW LIMITATIONS IN THE SAME BEAT AS THE POWER. If a character pays a
-     cost — fatigue, sensory trauma, social exposure, time penalty, resource
-     burn — the cost lands on-page with the technique, not three paragraphs
-     later as an afterthought.
-   - If `state.power_debt.strain_level` is high, the protagonist visibly
-     struggles: shorter breath, hesitation, tunnel vision, hands trembling.
-   - Generic "energy blast" descriptions are FORBIDDEN. Name the technique.
+**2. CHARACTER FAITHFULNESS (anti-Worfing):** Never write a protected
+   character losing to an opponent below their established level. If
+   the OC defeats a protected character, the win must be earned via
+   specific counter / setup / cost / canon-justified weakening.
 
-**2. CHARACTER FAITHFULNESS (anti-Worfing):**
-   - Never write a canon-protected character (anyone in `state.anti_worf_rules`)
-     losing to an opponent below their established level. Match their documented
-     dispositions and competence floors.
-   - If the protagonist defeats a protected character, the win must be earned:
-     a specific counter to a known weakness, a setup-heavy ambush, a
-     significant cost paid, or a canon-justified prior weakening.
-   - Match each character's documented disposition (from
-     `state.active_characters[name].disposition`) and dynamic_tags.
+**3. DIALOGUE VOICE:** Each character speaks in their own register.
+   Match documented speech patterns from the CHARACTER VOICES block.
 
-**3. DIALOGUE VOICE:**
-   - Each character speaks in their own register. Cold characters are terse;
-     verbose characters monologue. Read each line aloud mentally — does it
-     sound like THIS character?
-   - Match documented speech patterns when present. (Richer voice profiles
-     arrive in a later phase; for now, lean on `disposition`, `dynamic_tags`,
-     and any speech notes returned by `lore_lookup`.)
+**4. WORLD CONSISTENCY:** Events fit the timeline. Locations match
+   documented descriptions. Sensory grounding, not generic stage
+   dressing.
 
-**4. WORLD CONSISTENCY:**
-   - Events must fit the running timeline (`state.current_timeline_date`).
-   - Locations match documented descriptions — atmosphere, key features,
-     adjacent areas, controlling faction. Use sensory grounding, not
-     generic stage dressing.
-   - Show, don't tell. Concrete sensory details over abstract summary.
+**5. KNOWLEDGE BOUNDARIES (HARD WALL):** `state.forbidden_concepts` is
+   the protagonist's epistemic boundary. They cannot mention, think
+   about, or "vaguely sense" these concepts. Total silence. Write
+   around them: change the subject, get interrupted, elide the moment.
 
-**5. KNOWLEDGE BOUNDARIES (HARD WALL):**
-   - `state.forbidden_concepts` is the protagonist's epistemic boundary.
-     They cannot mention, think about, or "vaguely sense" these concepts.
-     Their inner monologue contains no hints, no resonances, no half-formed
-     suspicions about forbidden material. Total silence.
-   - If a forbidden concept would naturally arise, write around it: change
-     the subject, get interrupted, simply elide the moment. There is always
-     a narrative alternative.
+**6. DIVERGENCE INTEGRATION:** Active divergences have already
+   happened. This chapter shows their ripples landing.
 
-**6. DIVERGENCE INTEGRATION:**
-   - Every entry in `state.active_divergences` has already happened. This
-     chapter shows its ripple effects landing: characters react to changes,
-     factions adapt, new threats or opportunities surface.
-   - When the protagonist's actions THIS chapter would alter an upcoming
-     canon event, make the divergence explicit on-page. Note it in the
-     `divergences_created` field of the structured tail.
-
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
                     PHASE 2: CHAPTER STRUCTURE — HARD RULES
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
 
-**LENGTH:** __MIN_WORDS__-__MAX_WORDS__ words. This is a CHAPTER, not a vignette,
-not a scene-let, not a summary. Aim for the middle of the range; let scenes
-breathe; allow interiority and atmosphere.
+**LENGTH:** __MIN_WORDS__-__MAX_WORDS__ words of prose. Aim for the middle
+of the range; let scenes breathe; allow interiority and atmosphere.
 
-**OPENING — STRICT FORMAT:**
-  - The FIRST OUTPUT CHARACTER must be `#`. No preamble. No acknowledgments.
-    No "I will now write...", no "Okay, here is...", no "Based on the player's
-    choice...". Just the chapter header and the prose.
-  - Begin with a markdown header: `# Chapter N` where N = `state.chapter_count + 1`.
-    (state.chapter_count tracks chapters ALREADY COMPLETED; the chapter you are
-    writing is the next one.)
-  - On the very first chapter when state.chapter_count is 0, the header is
-    `# Chapter 1`.
+**PROSE FIELD — NO MARKDOWN HEADER:** The `prose` field of your output
+contains the chapter body ONLY. Do NOT include a `# Chapter N` header.
+The chapter number is prepended downstream from canonical state.
 
 **THREE-LAYER OPENING (one paragraph each, in this order):**
-  1. **SENSORY GROUNDING** — open in the world's body. Smell, sound, light,
-     temperature, the weight of a uniform, the taste of the air. Place the
-     reader physically before introducing anything else.
-  2. **UNIVERSE-SPECIFIC LORE** — anchor the scene in something only this
-     world has. Named institutions, named technology, named techniques,
-     named factions. Specificity is the engine of immersion. Numbers are
-     better than vague qualifiers ("4,327 cursed spirits", not "many spirits";
-     "Course 1" or "Bloom", not "the elite group"; "First High School", not
-     "the magic school").
-  3. **CHARACTER INTERIORITY** — a glimpse into the POV character's inner
-     state. What are they hiding? What are they bracing for? What does the
-     world cost them right now?
+  1. **SENSORY GROUNDING** — open in the world's body. Smell, sound,
+     light, temperature. Place the reader physically before introducing
+     anything else.
+  2. **UNIVERSE-SPECIFIC LORE** — anchor in something only this world
+     has. Named institutions, technology, techniques, factions.
+     Specificity is the engine of immersion. Numbers > vague qualifiers.
+  3. **CHARACTER INTERIORITY** — a glimpse into the POV character's
+     inner state. What are they hiding? What does the world cost them?
 
-**STRUCTURE — overall arc of the chapter:**
-  - Open on setting and atmosphere.
-  - Place the protagonist in the setting, embodied.
-  - Establish internal stakes (what does THIS character risk losing?).
-  - Build to external action — confrontation, revelation, choice.
-  - Close on a consequence: a cost paid, a near-miss, a question raised,
-     a divergence triggered. NEVER end on a tidy resolution; this is an
-     ongoing serialized narrative.
+**STRUCTURE:** Open on setting & atmosphere → place the protagonist in
+it, embodied → establish internal stakes → build to confrontation /
+revelation / choice → close on a consequence (cost paid, near-miss,
+question raised, divergence triggered). NEVER end on tidy resolution.
 
-**SHOW POWER WITH LIMITATION IN THE SAME BEAT:**
-  When the protagonist (or any character) uses an ability, the page MUST
-  contain BOTH the demonstration and the cost in the same scene. Examples:
-    - The technique fires; the user's vision tunnels for the next minute.
-    - The shield holds; the hand sustaining it goes numb to the elbow.
-    - The illusion deceives; the user can't speak above a whisper for an hour.
-  No power-without-cost. No costs deferred to later chapters. Same beat.
+**SHOW POWER WITH LIMITATION IN THE SAME BEAT.** Same beat. Always.
 
-**STAKES IN EVERY CHAPTER (even non-combat ones):**
-  At least ONE meaningful cost or near-miss per chapter. For non-combat
-  chapters, this can be a near social exposure, a psychological toll, an
-  opportunity foreclosed, a relationship strained. The `stakes_tracking`
-  block in your structured tail must reflect this — empty arrays signal a
-  problem.
+**STAKES IN EVERY CHAPTER (even non-combat):** At least ONE meaningful
+cost or near-miss per chapter. For dialogue-heavy chapters, this can be
+near-exposure, psychological toll, opportunity foreclosed, relationship
+strained.
 
-**SPECIFICITY RULES:**
-  - Real numbers over qualifiers when possible.
-  - Named characters, named techniques, named factions, named places.
-  - Concrete sensory anchors over abstract description.
-  - Documented detail over invention. When you don't know, call `lore_lookup`.
+**SPECIFICITY:** Real numbers, named characters/techniques/factions/
+places, concrete sensory anchors, documented detail.
 
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
                     PHASE 3: CHOICE GENERATION — TIMELINE-AWARE
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
 
-After the prose, you generate EXACTLY 4 choices for the player. Each choice
-has a `tier` and an optional `tied_event`.
+Generate EXACTLY 4 choices in `chapter_meta.choices`. Each has a `tier`
+and an optional `tied_event`.
 
-**REQUIRED TIER MIX (each tier appears AT LEAST ONCE across the four):**
-  1. **canon** — engages an upcoming canon event. Keeps the story aligned
-     with the documented timeline. Set `tied_event` to the canon event name.
-  2. **divergence** — would cause the protagonist to miss or alter an
-     upcoming canon event. Creates butterfly effects. Set `tied_event` to
-     the canon event the choice would derail.
-  3. **character** — driven by relationships, personal goals, or internal
-     conflict. May or may not affect canon directly. `tied_event` may be null.
-  4. **wildcard** — an unexpected option with significant consequences.
-     Something the player wouldn't see in a typical narrative beat.
+**REQUIRED TIER MIX (each tier appears EXACTLY ONCE):**
+  1. **canon** — engages an upcoming canon event. `tied_event` = the
+     canon event name.
+  2. **divergence** — would alter or skip an upcoming canon event.
+     `tied_event` = the canon event the choice would derail.
+  3. **character** — driven by relationships, personal goals, internal
+     conflict. `tied_event` may be null.
+  4. **wildcard** — unexpected option with significant consequences.
      `tied_event` may be null.
 
-**CHOICE QUALITY:**
-  - Each choice leads to a meaningfully different outcome.
-  - Each choice is achievable given the protagonist's documented abilities.
-  - At least one choice carries significant risk.
-  - No choice violates canon constraints or `state.forbidden_concepts`.
-  - Tie at least one choice (the canon-path one) to an upcoming event the
-     story is building toward.
+**CHOICE QUALITY:** Each leads to a meaningfully different outcome.
+Each is achievable. At least one carries significant risk. None
+violate canon constraints or `forbidden_concepts`.
 
-═══════════════════════════════════════════════════════════════════════════════
-                    PHASE 4: OUTPUT FORMAT
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
+                    PHASE 4: STRUCTURED OUTPUT (StorytellerOutput)
+══════════════════════════════════════════════════════════════════════════════════════
 
-Your output is exactly TWO components, in this order:
+Your single output is a `StorytellerOutput` with two top-level fields:
 
-1. **The chapter prose**, beginning with `# Chapter N` and running to
-   __MIN_WORDS__-__MAX_WORDS__ words.
+  - `prose` (str): The chapter body. __MIN_WORDS__-__MAX_WORDS__ words.
+     NO markdown header (the framework prepends `# Chapter N`).
+     Three-layer opening, three-act arc, costs landed in-beat.
 
-2. **A fenced JSON tail** — immediately after the prose, a single
-   ```json ... ``` block matching the schema below.
+  - `chapter_meta` (ChapterOutput nested): The structured tail.
+      - `summary` (str): 5-10 sentence summary covering key events,
+         character development, plot advancement, world-state changes,
+         costs paid.
+      - `choices` (list of 4): Each {text, tier, tied_event}. All four
+         tiers exactly once.
+      - `choice_timeline_notes` (TimelineNotes): {upcoming_event_considered,
+         canon_path_choice, divergence_choice} (1-based indices into choices).
+      - `timeline` (TimelineMeta): {chapter_start_date, chapter_end_date,
+         time_elapsed, canon_events_addressed, divergences_created}.
+      - `canon_elements_used` (list[str]): Specific canon facts woven
+         into the prose.
+      - `power_limitations_shown` (list[str]): Specific limitations
+         demonstrated. MUST be non-empty.
+      - `stakes_tracking` (StakesTracking): {costs_paid, near_misses,
+         power_debt_incurred, consequences_triggered}. costs_paid and
+         near_misses MUST be non-empty even for non-combat chapters
+         (track narrative costs: "near social exposure", "opportunity
+         foreclosed", "psychological toll").
+      - `character_voices_used` (list[str]): Canon characters who spoke.
+      - `questions` (list of 1-2): Each {question, context, type:
+         "choice", options}. Use these when the next move could branch
+         on tone/intensity, when an upcoming canon event is approaching,
+         or near a knowledge boundary.
 
-PROSE FIRST, THEN JSON. Never the reverse. Never two JSON blocks. Never
-JSON outside a fenced code block.
+**Use tools (`lore_lookup`, `trigger_research`) BEFORE producing your
+final output — they're available during generation. Once you have the
+facts you need, emit the StorytellerOutput.**
 
-**SCHEMA (strict — every field required unless marked optional):**
-
-```json
-{
-    "summary": "5-10 sentence summary covering: key events, character development, plot advancement, world-state changes, and any costs paid.",
-    "choices": [
-        {"text": "...", "tier": "canon",       "tied_event": "Name of upcoming canon event"},
-        {"text": "...", "tier": "divergence",  "tied_event": "Name of canon event this would alter"},
-        {"text": "...", "tier": "character",   "tied_event": null},
-        {"text": "...", "tier": "wildcard",    "tied_event": null}
-    ],
-    "choice_timeline_notes": {
-        "upcoming_event_considered": "Name of the next canon event these choices relate to, or null",
-        "canon_path_choice": 1,
-        "divergence_choice": 2
-    },
-    "timeline": {
-        "chapter_start_date": "In-world date when the chapter begins (e.g. 2095-04-03)",
-        "chapter_end_date": "In-world date when the chapter ends",
-        "time_elapsed": "Human-readable elapsed time (e.g. '4 hours', '2 days')",
-        "canon_events_addressed": ["Canon events that occurred or were referenced this chapter"],
-        "divergences_created": ["Changes from canon caused by this chapter"]
-    },
-    "canon_elements_used": ["Specific canon facts woven into the prose"],
-    "power_limitations_shown": ["Specific limitations demonstrated this chapter — MUST be non-empty"],
-    "stakes_tracking": {
-        "costs_paid": ["Costs the protagonist suffered (physical, psychological, social, resource) — MUST be non-empty"],
-        "near_misses": ["Close calls that could have been worse — MUST be non-empty even for non-combat chapters"],
-        "power_debt_incurred": {"<technique-name>": "low | medium | high | critical"},
-        "consequences_triggered": ["Pending consequences from prior chapters that landed this chapter"]
-    },
-    "character_voices_used": ["Canon characters who spoke this chapter"],
-    "questions": [
-        {
-            "question": "How should the protagonist approach [upcoming situation]?",
-            "context": "This shapes the tone of the next chapter.",
-            "type": "choice",
-            "options": ["Aggressive", "Cautious", "Diplomatic"]
-        }
-    ]
-}
-```
-
-**OUTPUT FORMAT REMINDERS:**
-  - The choices array contains EXACTLY 4 entries. Each has tier ∈
-     {canon, divergence, character, wildcard}, and the four tiers each
-     appear AT LEAST ONCE.
-  - `power_limitations_shown` is non-empty — list the specific limitations
-     you demonstrated on-page.
-  - `stakes_tracking.costs_paid` and `near_misses` are non-empty even for
-     dialogue-heavy or non-combat chapters. Track narrative costs:
-     "near social exposure", "psychological toll of deception",
-     "opportunity foreclosed".
-  - `questions` has 1-2 entries. Use them when the player's next move could
-     meaningfully branch on tone/intensity, when an upcoming canon event is
-     approaching, or when the protagonist is close to a knowledge boundary.
-  - The fenced JSON block is the LAST thing you emit. Nothing follows it.
-  - First character of your output: `#`. Last character of your output: `` ` ``.
-
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
                               FINAL CHECKLIST
-═══════════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════════════════
 
-Before finalizing:
-  - Output begins with `# Chapter N` (no preamble).
-  - __MIN_WORDS__-__MAX_WORDS__ words of prose.
-  - Three-layer opening (sensory → universe-specific → interiority).
-  - Every power demonstration has its cost in the same beat.
+Before emitting:
+  - prose has __MIN_WORDS__-__MAX_WORDS__ words and NO header.
+  - Three-layer opening present.
+  - Every power demo has its cost in the same beat.
   - At least one cost or near-miss landed.
-  - No reference to anything in `state.forbidden_concepts`.
-  - No protected character (`state.anti_worf_rules`) wrote below their floor.
-  - Fenced ```json ... ``` tail follows the prose, matches the schema,
-     contains 4 choices spanning all 4 tiers.
-  - Prose first, JSON last, nothing after the closing fence.
+  - No reference to anything in `forbidden_concepts`.
+  - No protected character wrote below their floor.
+  - chapter_meta.choices has 4 entries spanning all 4 tiers exactly once.
+  - chapter_meta.questions has 1-2 entries.
 """.replace("__MIN_WORDS__", str(_CHAPTER_MIN_WORDS)).replace("__MAX_WORDS__", str(_CHAPTER_MAX_WORDS))
 
 
 def _tier_marker(tier) -> str:
-    """Map canon-event tier to a visual urgency marker.
-
-    Robust to str / Enum / unset: ADK serialises state through JSON which
-    flattens str-based Enums to their value, but in-process callers
-    (smoke tests, future direct invocations) may pass the Enum itself.
-    """
+    """Map canon-event tier to a visual urgency marker."""
     val = getattr(tier, "value", tier) if tier is not None else "medium"
     return {
         "mandatory": "[!!!]",
@@ -379,12 +241,7 @@ def _tier_marker(tier) -> str:
 
 
 def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
-    """Build TIMELINE ENFORCEMENT block from state.canon_timeline.events.
-
-    Lists upcoming events sorted by pressure_score (highest first) and
-    tags each with [!!!] / [!!] / [!] per its tier. Retired events
-    (occurred / modified / prevented) are excluded.
-    """
+    """Build TIMELINE ENFORCEMENT block from state.canon_timeline.events."""
     timeline = state.get("canon_timeline") or {}
     events = timeline.get("events") if isinstance(timeline, dict) else None
     if not events:
@@ -412,16 +269,15 @@ def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
         + "\n\nRules: [!!!] MANDATORY events MUST appear in this chapter. "
           "[!!] HIGH events should be foreshadowed or prepared. "
           "[!] MEDIUM events may be woven in when narratively appropriate. "
-          "After playing out an event, the archivist will retire it via advance_event_status."
+          "After playing out an event, the archivist will retire it via "
+          "canon_event_status_updates."
     )
 
 
 def _build_character_voices_block(state, active_names: list[str]) -> Optional[str]:
-    """Inject per-character speech profiles for active characters."""
     voices = state.get("character_voices") or {}
     if not voices:
         return None
-
     blocks = []
     for name in active_names:
         v = voices.get(name)
@@ -437,19 +293,16 @@ def _build_character_voices_block(state, active_names: list[str]) -> Optional[st
         if v.get("example_dialogue"): bullet.append(f"  - example: \"{v['example_dialogue']}\"")
         if bullet:
             blocks.append(f"**{name}**\n" + "\n".join(bullet))
-
     if not blocks:
         return None
     return "CHARACTER VOICES — match these patterns when these characters speak:\n\n" + "\n\n".join(blocks)
 
 
 def _build_power_system_block(state) -> Optional[str]:
-    """Inject the OC's power-source catalog with techniques + limitations."""
     origins = state.get("power_origins") or {}
     sources = origins.get("sources") if isinstance(origins, dict) else None
     if not sources:
         return None
-
     blocks = []
     for s in sources[:4]:
         if not isinstance(s, dict):
@@ -478,7 +331,6 @@ def _build_power_system_block(state) -> Optional[str]:
         if signatures:
             lines.append(f"Signature moves: {', '.join(signatures[:6])}")
         blocks.append("\n".join(lines))
-
     if not blocks:
         return None
     return (
@@ -489,7 +341,6 @@ def _build_power_system_block(state) -> Optional[str]:
 
 
 def _build_protected_characters_block(state, active_names: list[str]) -> Optional[str]:
-    """Anti-Worf integrity floors for any active character that has one."""
     integrity = state.get("canon_character_integrity") or {}
     if not integrity:
         return None
@@ -515,12 +366,10 @@ def _build_protected_characters_block(state, active_names: list[str]) -> Optiona
 
 
 def _build_stakes_block(state, current_chapter: int) -> Optional[str]:
-    """Pending consequences scheduler: surface anything due-by current chapter."""
     stakes = state.get("stakes_and_consequences") or {}
     pending = stakes.get("pending_consequences") if isinstance(stakes, dict) else None
     if not pending:
         return None
-
     overdue, due_now, due_soon = [], [], []
     for c in pending:
         if not isinstance(c, dict):
@@ -535,31 +384,23 @@ def _build_stakes_block(state, current_chapter: int) -> Optional[str]:
             due_now.append(line + " [DUE NOW]")
         elif due == current_chapter + 1:
             due_soon.append(line + " [DUE NEXT]")
-
     if not (overdue or due_now or due_soon):
         return None
-
     parts = []
-    if overdue:
-        parts.append("[!!!] OVERDUE — must be addressed in this chapter:\n" + "\n".join(overdue))
-    if due_now:
-        parts.append("[!!] DUE NOW — should resolve this chapter:\n" + "\n".join(due_now))
-    if due_soon:
-        parts.append("[!] APPROACHING — foreshadow / prepare:\n" + "\n".join(due_soon))
+    if overdue: parts.append("[!!!] OVERDUE — must be addressed in this chapter:\n" + "\n".join(overdue))
+    if due_now: parts.append("[!!] DUE NOW — should resolve this chapter:\n" + "\n".join(due_now))
+    if due_soon: parts.append("[!] APPROACHING — foreshadow / prepare:\n" + "\n".join(due_soon))
     return "STAKES LEDGER — pending consequences from earlier choices:\n\n" + "\n\n".join(parts)
 
 
 def _build_knowledge_boundaries_block(state, active_names: list[str]) -> Optional[str]:
-    """Per-character epistemic limits for active characters."""
     kb = state.get("knowledge_boundaries") or {}
     if not isinstance(kb, dict):
         return None
-
     sections = []
     meta = kb.get("meta_knowledge_forbidden") or []
     if meta:
         sections.append("World-meta facts NO in-fic character may reference:\n  - " + "\n  - ".join(meta))
-
     char_limits = kb.get("character_knowledge_limits") or {}
     char_blocks = []
     for name in active_names:
@@ -577,18 +418,13 @@ def _build_knowledge_boundaries_block(state, active_names: list[str]) -> Optiona
             char_blocks.append("\n".join(lines))
     if char_blocks:
         sections.append("Per-character knowledge limits — never write a character referencing what they don't know:\n\n" + "\n\n".join(char_blocks))
-
     if not sections:
         return None
     return "KNOWLEDGE BOUNDARIES:\n\n" + "\n\n".join(sections)
 
 
 def _tick_pending_consequences(state, current_chapter: int) -> None:
-    """Mark any consequence whose due_by_chapter has passed as overdue.
-
-    Idempotent. Runs at the start of each storyteller turn so the
-    enforcement block can flag overdue threads as [OVERDUE].
-    """
+    """Mark any consequence whose due_by_chapter has passed as overdue. Idempotent."""
     stakes_raw = state.get("stakes_and_consequences")
     if not isinstance(stakes_raw, dict):
         return
@@ -604,7 +440,6 @@ def _tick_pending_consequences(state, current_chapter: int) -> None:
             c["overdue"] = True
             mutated = True
     if mutated:
-        # Reassign so ADK records the state delta.
         stakes_raw["pending_consequences"] = pending
         state["stakes_and_consequences"] = stakes_raw
 
@@ -615,14 +450,13 @@ async def _inject_active_character_lore(
 ) -> Optional[LlmResponse]:
     """``before_model_callback`` for the Storyteller.
 
-    Builds the Phase C enforcement blocks (timeline pressure, character
-    voices, power-system, protected characters, stakes ledger, knowledge
-    boundaries) plus the GraphRAG-fetched "Known facts" block, and
-    appends them all to the LLM request via ``append_instructions``.
+    Builds enforcement blocks (timeline / voices / power / protected /
+    stakes / knowledge) plus the Phase G PROTAGONIST FRAMEWORK and
+    PRIOR CHAPTER CONTEXT, and appends them via ``append_instructions``.
 
-    Each block is independent and falls through silently when its source
-    state is empty -- so a fresh story with thin state still works. The
-    pending-consequence overdue-tick runs once per turn here.
+    Each block is independent and falls through silently when source
+    state is empty -- so a fresh story still works. The pending-
+    consequence overdue-tick runs once per turn here.
     """
     state = callback_context.state
     active_characters = state.get("active_characters") or {}
@@ -634,10 +468,8 @@ async def _inject_active_character_lore(
 
     blocks: list[str] = []
 
-    # 0. PROTAGONIST FRAMEWORK — the OC's full premise + setup-wizard answers.
-    # WITHOUT this block the model defaults to canonical-universe protagonists
-    # (e.g. writes a Tatsuya Shiba POV chapter for a Mahouka × JJK story even
-    # though the OC is Kageaki Ren). This is the load-bearing block.
+    # 0. PROTAGONIST FRAMEWORK — hard creative direction. Without this the
+    # model defaults to canon-character POV chapters.
     premise = (state.get("story_premise") or "").strip()
     setup_conv = state.get("setup_conversation") or []
     if premise:
@@ -660,14 +492,10 @@ async def _inject_active_character_lore(
                 framework_lines.append(f"[{role.upper()}] {content}")
         blocks.append("\n".join(framework_lines))
 
-    # 0.5. PRIOR CHAPTER CONTEXT — continuity across chapters.
-    # Per-chapter run_async invocations are independent; ADK's
-    # EventsCompactionConfig may have summarised prior events thinly. We
-    # explicitly thread continuity by injecting the rolling chapter
-    # summaries + the closing prose of the most recent chapter + the
-    # user's choice that triggered this turn. Without this block,
-    # chapter 2 can read like a new vignette instead of a continuation
-    # of chapter 1.
+    # 0.5. PRIOR CHAPTER CONTEXT — continuity. Note: last_story_text now
+    # contains a deterministic "# Chapter N" header (added by
+    # storyteller_merge), but we still inject only the closing 1500 chars
+    # so the model picks up tone, not the header.
     chapter_summaries = state.get("chapter_summaries") or []
     last_story_text = state.get("last_story_text") or ""
     last_user_choice = state.get("last_user_choice") or ""
@@ -678,11 +506,6 @@ async def _inject_active_character_lore(
         if chapter_summaries:
             ctx_lines.append("")
             total_chapters = len(chapter_summaries)
-            # Inject the last 10 summaries verbatim; for stories longer than
-            # that, prepend a counter so the model knows older chapters exist
-            # and can recall them via lore_lookup ("Ch3 events", "Mahoraga
-            # encounter", etc.). The summarizer_node embeds every summary
-            # into LoreEmbedding under chapter_summary::N for semantic recall.
             window = chapter_summaries[-10:]
             window_start = max(1, total_chapters - len(window) + 1)
             if window_start > 1:
@@ -705,24 +528,24 @@ async def _inject_active_character_lore(
             ctx_lines.append(tail)
         if last_user_choice:
             ctx_lines.append("")
-            ctx_lines.append("─── Player\'s choice that triggered THIS chapter ───")
+            ctx_lines.append("─── Player's choice that triggered THIS chapter ───")
             ctx_lines.append(str(last_user_choice)[:600])
         if last_user_q_answers:
             ctx_lines.append("")
-            ctx_lines.append("─── Player\'s tone/style preferences for THIS chapter ───")
+            ctx_lines.append("─── Player's tone/style preferences for THIS chapter ───")
             for q, a in last_user_q_answers.items():
                 ctx_lines.append(f"• {str(q)[:200]}: {str(a)[:200]}")
         ctx_lines.append("")
         ctx_lines.append(
             "Open the chapter so it picks up directly from the closing prose above. "
-            "Honor the player\'s choice as the FIRST narrative beat — do not delay or "
+            "Honor the player's choice as the FIRST narrative beat — do not delay or "
             "circumvent it. State changes (active_characters trust shifts, pending "
             "consequences, power_debt strain, divergences) carry forward and must be "
             "reflected as ongoing reality, not retconned."
         )
         blocks.append("\n".join(ctx_lines))
 
-    # 1. Known facts about active characters (existing behavior)
+    # 1. Known facts about active characters
     if active_characters:
         char_blocks: list[str] = []
         for name in active_names:
@@ -753,7 +576,6 @@ async def _inject_active_character_lore(
 
     if not blocks:
         return None
-
     llm_request.append_instructions(blocks)
     logger.info(
         "Storyteller before_model: injected %d enforcement block(s) (active chars=%d, chapter=%d)",
@@ -763,31 +585,29 @@ async def _inject_active_character_lore(
 
 
 def create_storyteller_node() -> LlmAgent:
-    """
-    Creates the Storyteller Node.
+    """Storyteller agent in declarative output_schema mode.
 
-    The instruction is the v1-ported phased prompt (see _STORYTELLER_INSTRUCTION
-    above). Dynamic per-turn context — active-character lore, strain/mood notes,
-    anti-Worf rules — is layered on by:
-      * ``_inject_active_character_lore`` (before_model_callback below)
-      * ``GlobalInstructionPlugin`` with ``storyteller_instruction_provider``
-        (see src/plugins/global_instruction.py and src/app_container.py).
+    Emits a single ``StorytellerOutput`` (Pydantic) per chapter. ADK 2.0
+    handles the schema via Gemini's ``response_schema`` natively on
+    Vertex Gemini 3.x; on backends without native schema-with-tools
+    support, ``_OutputSchemaRequestProcessor`` injects a
+    ``SetModelResponseTool`` so the model can still call
+    ``lore_lookup``/``trigger_research`` and emit the structured final
+    answer through the response tool.
 
-    Tool calling stays at default ``mode='AUTO'`` so the model can elect to
-    skip ``lore_lookup`` when context is sufficient. ``mode='ANY'`` forces a
-    tool call every turn and produces infinite loops — see
-    ``src/nodes/archivist.py`` for the same lesson.
-
-    ``generate_content_config.max_output_tokens`` is set high enough for an
-    8,000-word chapter plus the JSON tail plus tool-call overhead.
+    The chapter header is prepended downstream by
+    ``storyteller_merge_node`` from ``state.chapter_count`` -- the model
+    never writes ``# Chapter N`` itself.
     """
     return LlmAgent(
         name="storyteller",
-        description="Generates the core narrative prose and structured chapter tail.",
+        description="Generates a structured chapter (prose + chapter_meta) per turn.",
         model=STORYTELLER_MODEL,
         instruction=_STORYTELLER_INSTRUCTION,
         tools=[lore_lookup, trigger_research],
         before_model_callback=_inject_active_character_lore,
+        output_schema=StorytellerOutput,
+        output_key="storyteller_output",
         generate_content_config=types.GenerateContentConfig(
             max_output_tokens=STORYTELLER_MAX_OUTPUT_TOKENS,
         ),

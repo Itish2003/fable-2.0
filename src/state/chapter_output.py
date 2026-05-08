@@ -1,28 +1,20 @@
-"""Structured-output schema for the Storyteller's chapter tail.
+"""Structured chapter-meta schema (typed choices + meta-questions).
 
-The Storyteller emits prose first, then a fenced ```json {...} ``` block
-matching :class:`ChapterOutput`. This module owns:
+Nested-only schema. Used as the ``chapter_meta`` field of
+:class:`StorytellerOutput`. Wire-level validators that would crash the
+LlmAgent invocation on model drift have been moved to runtime checks in
+the auditor (``min_length``/``max_length`` on choices/questions, and
+the four-tier coverage rule). ADK's ``output_schema`` parses this on
+the LlmAgent path; the auditor enforces structural rules afterwards.
 
-* the Pydantic models for that block
-* :func:`parse_chapter_tail`, the helper the runner uses to split a
-  storyteller event into ``(prose, ChapterOutput | None)``.
-
-Schema is ported from FableWeaver v1's narrative.py output format with
-adaptations to v2 state-field names. See
-``/Users/itish/Downloads/Fable/src/agents/narrative.py`` Phase 4 for the
-v1 reference.
+Schema is ported from FableWeaver v1's narrative.py output format.
 """
 
 from __future__ import annotations
 
-import json
-import logging
-import re
 from typing import Literal, get_args
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
-
-logger = logging.getLogger("fable.state.chapter_output")
+from pydantic import BaseModel, Field
 
 ChoiceTier = Literal["canon", "divergence", "character", "wildcard"]
 
@@ -67,7 +59,6 @@ class StakesTracking(BaseModel):
 
     costs_paid: list[str] = Field(default_factory=list)
     near_misses: list[str] = Field(default_factory=list)
-    # technique name -> 'low' | 'medium' | 'high' | 'critical'
     power_debt_incurred: dict[str, str] = Field(default_factory=dict)
     consequences_triggered: list[str] = Field(default_factory=list)
 
@@ -82,14 +73,18 @@ class ChapterQuestion(BaseModel):
 
 
 class ChapterOutput(BaseModel):
-    """Full structured tail emitted after the prose."""
+    """Structured chapter-meta tail. Nested under StorytellerOutput.chapter_meta.
+
+    No ``min_length``/``max_length`` constraints on the wire schema and no
+    ``@model_validator`` -- both crash the LlmAgent invocation on the rare
+    occasion the model drifts. The auditor enforces these rules at runtime
+    via :func:`validate_tiers` and explicit length checks, routing to
+    'failed' (retry) or 'recovery' instead.
+    """
 
     summary: str = Field(description="5-10 sentence summary of the chapter.")
     choices: list[Choice] = Field(
-        ...,
-        min_length=4,
-        max_length=4,
-        description="Exactly 4 typed choices, one of each tier (canon/divergence/character/wildcard).",
+        description="4 typed choices, one of each tier (canon/divergence/character/wildcard).",
     )
     choice_timeline_notes: TimelineNotes
     timeline: TimelineMeta
@@ -98,70 +93,30 @@ class ChapterOutput(BaseModel):
     stakes_tracking: StakesTracking
     character_voices_used: list[str] = Field(default_factory=list)
     questions: list[ChapterQuestion] = Field(
-        ...,
-        min_length=1,
-        max_length=2,
         description="1-2 meta-questions shaping the next chapter's tone / pacing.",
     )
 
-    @model_validator(mode="after")
-    def _validate_tier_coverage(self):
-        """Each chapter must surface all 4 tiers exactly once.
-        The prompt enforces this; this validator catches drift in production."""
-        tiers = {c.tier for c in self.choices}
-        required = set(get_args(ChoiceTier))
-        if tiers != required:
-            raise ValueError(
-                f"choices must cover all 4 tiers exactly once; got {sorted(tiers)}"
-            )
-        return self
 
+def validate_tiers(choices: list[dict] | list[Choice]) -> tuple[bool, str]:
+    """Runtime check: choices must surface all 4 tiers exactly once.
 
-
-# ─── Tail parsing ────────────────────────────────────────────────────────────
-
-# Match the LAST ```json ... ``` block in the text. Use a non-greedy body
-# inside the fence and re.DOTALL so newlines in JSON are captured. We rely
-# on `re.findall` returning every match in order so the caller can pick the
-# last one (storytellers occasionally emit example JSON in prose).
-_FENCED_JSON_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
-
-
-def parse_chapter_tail(prose_with_json: str) -> tuple[str, ChapterOutput | None]:
-    """Split storyteller output into ``(prose, ChapterOutput | None)``.
-
-    Locates the LAST ``` ```json ... ``` ``` block in ``prose_with_json``,
-    parses it into :class:`ChapterOutput`, and returns the prose preceding
-    the block paired with the parsed model.
-
-    On any failure (no fence, malformed JSON, schema mismatch) returns
-    ``(prose_with_json, None)`` so the runner can fall back to streaming
-    the raw text. Failures are logged at ``warning`` level but never raise.
+    Returns ``(True, "")`` on success, ``(False, reason)`` on failure.
+    Auditor uses this for routing decisions.
     """
-    if not prose_with_json:
-        return prose_with_json, None
-
-    matches = list(_FENCED_JSON_RE.finditer(prose_with_json))
-    if not matches:
-        return prose_with_json, None
-
-    last = matches[-1]
-    json_body = last.group(1)
-    prose = prose_with_json[: last.start()].rstrip()
-
-    try:
-        raw = json.loads(json_body)
-    except json.JSONDecodeError as e:
-        logger.warning("parse_chapter_tail: JSON decode failed: %s", e)
-        return prose_with_json, None
-
-    try:
-        chapter = ChapterOutput.model_validate(raw)
-    except ValidationError as e:
-        logger.warning("parse_chapter_tail: schema validation failed: %s", e)
-        return prose_with_json, None
-
-    return prose, chapter
+    seen: list[str] = []
+    for c in choices:
+        tier = c.tier if isinstance(c, Choice) else c.get("tier")
+        if tier:
+            seen.append(tier)
+    required = set(get_args(ChoiceTier))
+    actual = set(seen)
+    if actual != required:
+        missing = required - actual
+        extra = actual - required
+        return False, f"tier coverage; missing={sorted(missing)} extra={sorted(extra)}"
+    if len(seen) != 4:
+        return False, f"expected exactly 4 choices, got {len(seen)}"
+    return True, ""
 
 
 __all__ = [
@@ -172,5 +127,5 @@ __all__ = [
     "StakesTracking",
     "ChapterQuestion",
     "ChapterOutput",
-    "parse_chapter_tail",
+    "validate_tiers",
 ]

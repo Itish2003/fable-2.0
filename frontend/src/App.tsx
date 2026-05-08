@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import StoryView from './components/StoryView';
 import SetupWizard from './components/SetupWizard';
 import HomeScreen from './components/HomeScreen';
@@ -11,6 +11,15 @@ type SelectedSession = { id: string; isResumed: boolean };
 function App() {
   const [selectedSession, setSelectedSession] = useState<SelectedSession | null>(null);
   const story = useStory(selectedSession?.id ?? null, selectedSession?.isResumed ?? false);
+
+  // Listen for session-not-found from useStory: backend reported the
+  // story_id we held no longer exists in the DB. Drop selectedSession
+  // so we render the HomeScreen instead of staring at a broken WS.
+  useEffect(() => {
+    const onGone = () => setSelectedSession(null);
+    window.addEventListener('fable:session-not-found', onGone);
+    return () => window.removeEventListener('fable:session-not-found', onGone);
+  }, []);
 
   const handleNewStory = async () => {
     const res = await fetch(`${API_BASE}/stories`, {

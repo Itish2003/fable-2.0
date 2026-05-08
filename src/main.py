@@ -181,15 +181,31 @@ async def story_websocket(websocket: WebSocket, session_id: str):
         # as a choice response, which corrupts the story flow.
         from src.services.session_manager import session_service
         from src.ws.runner import _emit_state_update
+        existing = None
         try:
             existing = await session_service.get_session(
                 app_name="fable_2_0",
                 user_id="local_tester",
                 session_id=session_id,
             )
-            is_fresh = not (existing and (existing.state or {}).get("story_premise"))
         except Exception:
-            is_fresh = True
+            existing = None
+
+        # Session was deleted externally (e.g. via the trash icon, the
+        # /stories DELETE endpoint, or a migration script). The frontend
+        # still has the stale session_id in `selectedSession`. Tell it
+        # explicitly so it can reset to the home screen instead of
+        # crashing on a SessionNotFoundError from the runner.
+        if existing is None:
+            logger.info("WS connect for unknown session %s; sending session_not_found.", session_id)
+            await manager.send_personal_message({
+                "type": "error",
+                "kind": "session_not_found",
+                "message": "This story no longer exists. Returning to the home screen.",
+            }, session_id)
+            return  # finally clause closes the connection
+
+        is_fresh = not (existing.state or {}).get("story_premise")
 
         if is_fresh:
             task = asyncio.create_task(execute_adk_turn(

@@ -111,7 +111,7 @@ export type WsMessage =
   | { type: 'request_input'; interrupt_id: string; message: string }
   | { type: 'status'; message: string }
   | { type: 'turn_complete'; invocation_id?: string }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; kind?: 'session_not_found' | 'timeout' | string }
   | { type: 'undo_complete' }
   | { type: 'rewrite_started' }
   | { type: 'state_update'; data: StoryStateData };
@@ -282,6 +282,12 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
         case 'error':
           setIsTyping(false);
+          if (data.kind === 'session_not_found') {
+            // Session was deleted server-side; reset so the parent App
+            // returns to the HomeScreen.
+            window.dispatchEvent(new CustomEvent('fable:session-not-found'));
+            return;
+          }
           setProseAndFragment('system', `\n\n[System Error]: ${data.message}\n\n`);
           break;
 

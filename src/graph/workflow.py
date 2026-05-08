@@ -15,7 +15,7 @@ from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state, crea
 
 # Phase 9: Narrative Intelligence Nodes
 from src.nodes.intent_router import run_intent_router
-from src.nodes.summarizer import create_summarizer, summarizer_node
+from src.nodes.summarizer import summarizer_node
 from src.nodes.user_choice_input import user_choice_input_node
 
 
@@ -63,8 +63,9 @@ def build_fable_workflow() -> Workflow:
     # Phase 9 Nodes
     intent_router_node = run_intent_router
 
-    summarizer_agent = create_summarizer()
-    summarizer_agent_node = build_node(summarizer_agent)
+    # Phase H follow-up: the summarizer was previously LlmAgent + parser-@node.
+    # Now summarizer_node does the LLM call directly (see src/nodes/summarizer.py),
+    # so the shim agent is gone. archivist_node -> summarizer_node directly.
     summarizer_parser_node = summarizer_node
 
     # Phase B: choice_generator removed -- the storyteller already emits
@@ -132,8 +133,7 @@ def build_fable_workflow() -> Workflow:
         (recovery_node, user_choice_node),
 
         # Narrative Intelligence: Summarize, then Surface Choices
-        (archivist_node, summarizer_agent_node),
-        (summarizer_agent_node, summarizer_parser_node),
+        (archivist_node, summarizer_parser_node),
         (summarizer_parser_node, user_choice_node),
 
         # After waiting for user input, loop back to the intent router.

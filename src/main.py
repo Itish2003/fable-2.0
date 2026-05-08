@@ -75,8 +75,6 @@ async def list_stories(user_id: str):
         state = getattr(s, "state", None) or {}
         raw_premise = state.get("story_premise") or ""
         story_premise = raw_premise if isinstance(raw_premise, str) else str(raw_premise)
-        if not story_premise:
-            continue
 
         power_debt = state.get("power_debt") or {}
         power_debt_level = int(power_debt.get("strain_level", 0)) if isinstance(power_debt, dict) else 0

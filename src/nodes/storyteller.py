@@ -640,7 +640,7 @@ async def _inject_active_character_lore(
             "Do NOT write a chapter focused on canon characters; the canon characters orbit",
             "around this OC. The framework below is HARD CREATIVE DIRECTION, on par with canon:",
             "",
-            premise[:6000],
+            premise[:6000] + ("\n…[truncated; full premise persisted in state.story_premise]" if len(premise) > 6000 else ""),
         ]
         if isinstance(setup_conv, list) and setup_conv:
             framework_lines.append("")

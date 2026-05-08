@@ -25,10 +25,10 @@ def _heuristic_universes(premise: str) -> list[str]:
     been populated yet (e.g. early chapters before lore_keeper recorded an
     explicit list). Conservative: only matches a small, well-known alias set.
     """
-    from src.utils.leakage_terms import _UNIVERSE_ALIASES
+    from src.utils.leakage_terms import UNIVERSE_ALIASES
     found: list[str] = []
     p = (premise or "").lower()
-    for alias in _UNIVERSE_ALIASES:
+    for alias in UNIVERSE_ALIASES:
         if alias in p:
             # Map alias -> a canonical title-shaped string detect_leakage
             # can normalise back to a slug.
@@ -137,6 +137,18 @@ async def run_auditor(
 
     # Reset the retry counter so future failures start fresh.
     ctx.state[_AUDIT_RETRY_KEY] = 0
+
+    # Advance chapter_count: state.chapter_count is "the chapter being
+    # authored now". After a successful audit the chapter is committed,
+    # so bump the counter so the next storyteller turn writes the next
+    # chapter number. (world_builder inits to 1; this increments to 2
+    # after Chapter 1 finishes, etc.)
+    try:
+        prev = int(ctx.state.get("chapter_count", 1) or 1)
+        ctx.state["chapter_count"] = prev + 1
+        logger.info("Chapter %d audited; advancing chapter_count -> %d", prev, prev + 1)
+    except Exception:
+        pass
     # Phase F: reset per-chapter trigger_research budget so the next
     # chapter gets a fresh 2-call cap. Lazy import keeps the auditor
     # decoupled from the research_tools module if it's not loaded yet.

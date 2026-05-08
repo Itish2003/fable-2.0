@@ -378,10 +378,10 @@ async def add_pending_consequence(
         "overdue": False,
     })
     stakes["pending_consequences"] = pending
-    # Preserve other stakes fields
-    stakes.setdefault("costs_paid", [])
-    stakes.setdefault("near_misses", [])
-    stakes.setdefault("power_usage_debt", {})
+    # The dict copy at the top of this function (`dict(... or {})`) already
+    # preserves any sibling fields that were set; the previous setdefault
+    # chain was redundant. Empty siblings stay missing -- the storyteller
+    # callback's enforcement-block builder treats absent == empty.
     tool_context.state["stakes_and_consequences"] = stakes
     return {"added": True, "due_by_chapter": int(due_by_chapter)}
 

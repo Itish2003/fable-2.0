@@ -106,8 +106,8 @@ them, do NOT re-fetch what's already in context, do NOT contradict them.
       Protected characters MUST act at or above the documented level.
   - `state.power_debt.strain_level` — int, 0-100+. >80 = severe exhaustion.
       Above the threshold, show physical/mental toll explicitly.
-  - `state.chapter_count` — int, the number of chapters ALREADY COMPLETED.
-      The chapter you are about to write is `state.chapter_count + 1`.
+  - `state.chapter_count` — int, the chapter you are about to write
+      (1 on the very first chapter, 2 on the second, etc.).
   - `state.last_user_choice` — the action the player just selected.
 
 ═══════════════════════════════════════════════════════════════════════════════

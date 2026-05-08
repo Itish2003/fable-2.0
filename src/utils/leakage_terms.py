@@ -67,7 +67,7 @@ LEAKAGE_TERMS: dict[str, list[str]] = {
 }
 
 # Map free-form universe titles -> the short slug used as a LEAKAGE_TERMS key.
-_UNIVERSE_ALIASES: dict[str, str] = {
+UNIVERSE_ALIASES: dict[str, str] = {
     "jujutsu kaisen": "jjk",
     "worm": "worm",
     "wormverse": "worm",
@@ -91,11 +91,11 @@ def normalize_universes(story_universes: Iterable[str]) -> set[str]:
         key = (u or "").strip().lower()
         if not key:
             continue
-        if key in _UNIVERSE_ALIASES:
-            out.add(_UNIVERSE_ALIASES[key])
+        if key in UNIVERSE_ALIASES:
+            out.add(UNIVERSE_ALIASES[key])
             continue
         # Substring fallback: aliases that appear inside a longer title.
-        for alias, slug in _UNIVERSE_ALIASES.items():
+        for alias, slug in UNIVERSE_ALIASES.items():
             if alias in key:
                 out.add(slug)
                 break

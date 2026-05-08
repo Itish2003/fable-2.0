@@ -1,4 +1,4 @@
-from google.adk.workflow import FunctionNode, JoinNode, START, Workflow
+from google.adk.workflow import FunctionNode, START, Workflow
 # build_node has no public alternative; not exported in google.adk.workflow.__all__.
 from google.adk.workflow.utils._workflow_graph_utils import build_node  # noqa: I001 — no public alternative
 
@@ -83,7 +83,12 @@ def build_fable_workflow() -> Workflow:
     lore_hunter_agent.parallel_worker = True
     lore_hunter_swarm = build_node(lore_hunter_agent)
 
-    swarm_join = JoinNode(name="swarm_join")
+    # JoinNode dropped: _ParallelWorker._run_impl already aggregates
+    # sub-run outputs into a single list and yields it as the worker's
+    # own output (workflow/_parallel_worker.py:122). A JoinNode would
+    # only earn its keep if multiple distinct upstream nodes converged
+    # on the keeper; with a single _ParallelWorker upstream it's a
+    # decorative one-key dict wrapper around the same list.
 
     lore_keeper_node = build_node(lore_keeper_agent)
     lore_keeper_injector = inject_lore_to_state
@@ -108,11 +113,12 @@ def build_fable_workflow() -> Workflow:
             "skip": intent_router_node,
         }),
 
-        # Setup pipeline (unchanged).
+        # Setup pipeline. lore_hunter_swarm yields list[LoreFinding-dict];
+        # ADK auto-JSON-serialises that into the keeper's prompt as a user
+        # message (workflow/_llm_agent_wrapper.py:32-45).
         (query_planner_node, query_parser_node),
         (query_parser_node, lore_hunter_swarm),
-        (lore_hunter_swarm, swarm_join),
-        (swarm_join, lore_keeper_node),
+        (lore_hunter_swarm, lore_keeper_node),
         (lore_keeper_node, lore_keeper_injector),
         (lore_keeper_injector, {
             "fallback": fallback_extractor_node,

@@ -130,7 +130,7 @@ class WorldBibleExtraction(BaseModel):
 def create_lore_keeper() -> LlmAgent:
     return LlmAgent(
         name="lore_keeper",
-        description="Fuses raw wiki research into a structured World Bible for the Fable Engine.",
+        description="Fuses structured swarm findings into a World Bible for the Fable Engine.",
         model="gemini-3.1-flash-lite",
         output_schema=LoreKeeperOutput,
         output_key="lore_keeper_output",
@@ -138,13 +138,46 @@ def create_lore_keeper() -> LlmAgent:
             response_mime_type="application/json"
         ),
         instruction="""
-You are the Lore Keeper. You will receive an array of research summaries
-produced by the Lore Hunter Swarm. Synthesize them into a structured
-World Bible that the storyteller will use for years of canon-faithful
-chapters.
+You are the Lore Keeper. You receive a JSON array of LoreFinding objects
+produced by the Lore Hunter Swarm. Each finding describes ONE entity
+(character / ability / faction / event / world / other) with structured
+fields:
+  {entity_name, entity_type, summary, canon_techniques, weaknesses_and_counters,
+   combat_style, speech_patterns, vocabulary_level, verbal_tics,
+   topics_to_avoid, example_dialogue, minimum_competence, knows, suspects,
+   doesnt_know, in_world_date, pressure_score, tier, playbook, spoilers,
+   sources, research_query}
 
-Output a JSON object matching this schema EXACTLY (omit nothing, but
-empty arrays are fine when truly nothing applies):
+Your job: aggregate these findings into the World Bible the storyteller
+uses for years of canon-faithful chapters. The mapping is mostly
+mechanical — most LoreFinding fields map directly to LoreKeeperOutput
+fields by entity_type — plus a synthesis pass for the cross-cutting
+fields (world_primer, forbidden_concepts, anti_worf_rules).
+
+Field-by-field mapping guide:
+
+  - findings with entity_type="ability" → contribute to ``power_sources``
+     (use canon_techniques, weaknesses_and_counters, combat_style).
+  - findings with entity_type="character" → contribute to:
+       ``character_voices`` (speech_patterns, vocabulary_level, verbal_tics,
+          topics_to_avoid, example_dialogue),
+       ``canon_character_integrity`` (minimum_competence + anti_worf_notes
+          synthesised from the finding's summary),
+       ``character_knowledge_limits`` (knows / suspects / doesnt_know).
+  - findings with entity_type="event" → contribute to ``canon_timeline_events``
+     (in_world_date, pressure_score, tier, playbook). Sort the final list
+     chronologically.
+  - ``spoilers`` from ALL findings → contribute to ``forbidden_concepts``
+     (deduplicate; preserve specificity).
+  - findings with entity_type="world" or universe-level summaries → inform
+     ``meta_knowledge_forbidden`` (world-meta facts no in-fic character
+     can reference).
+  - All findings together → inform ``anti_worf_rules`` (a quick
+     character-rule list synthesised from minimum_competence fields).
+  - All findings together → source material for ``world_primer`` synthesis.
+
+Output a JSON object matching the LoreKeeperOutput schema EXACTLY (omit
+nothing, but empty arrays are fine when truly nothing applies):
 
 1. "world_primer" — A rich markdown document (3-6 paragraphs) covering
    the crossover setting, power-system rules, key canon events,

@@ -10,6 +10,8 @@ from google.adk.agents.llm_agent import LlmAgent
 from google.adk.tools import google_search
 from google.adk.tools.load_web_page import load_web_page
 
+from src.state.lore_finding import LoreFinding
+
 logger = logging.getLogger("fable.init_research")
 
 
@@ -108,20 +110,27 @@ def parse_queries(ctx: Context, node_input: Any) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# 3. Lore Hunter Node (Tool Agent)
+# 3. Lore Hunter Node (Tool Agent + structured output)
 # ---------------------------------------------------------------------------
-# NOTE: the previous in-line comment claiming output_schema is mutually
-# exclusive with tools is wrong for ADK 2.0 -- _OutputSchemaRequestProcessor
-# handles the combo via SetModelResponseTool. The lore_hunter still uses
-# the free-form prose shape today because the keeper consumes prose; if
-# the swarm output ever needs to be inspected per-entity, this is the
-# place to add an output_schema=LoreFinding (low-risk follow-up).
+# ADK 2.0 supports tools + output_schema simultaneously via
+# _OutputSchemaRequestProcessor (verified in installed package). The hunter
+# scrapes the web with google_search + load_web_page, then emits a single
+# LoreFinding describing the entity researched.
+#
+# IMPORTANT: do NOT set output_key on this agent. _ParallelWorker fans out
+# this same agent N times under different sub-branches; output_key would
+# write to the SAME state field on every parallel run, last-writer-wins
+# (per audit: workflow/_llm_agent_wrapper.py:101-102). The aggregated
+# list flows through the output channel via _ParallelWorker._run_impl,
+# which is what the keeper reads. State has no role here.
 
 def create_lore_hunter() -> LlmAgent:
     return LlmAgent(
         name="lore_hunter",
-        description="Deep-scrapes wiki sources for one research target and returns canonical findings.",
+        description="Deep-scrapes wiki sources for one research target; emits a structured LoreFinding.",
         model="gemini-3.1-flash-lite",
+        output_schema=LoreFinding,
+        # Deliberately NO output_key (parallel_worker last-writer-wins footgun).
         instruction="""
 You are a Lore Hunter. You will receive a research target with three fields:
 - ENTITY: the character, ability, or faction to research
@@ -141,17 +150,42 @@ If a URL is inaccessible or errors, move to the next candidate.
 You MUST successfully load at least 2 pages before synthesizing.
 Using only search snippets without loading pages is a failure condition.
 
-STEP 3 — SYNTHESIZE from scraped content (not snippets):
-Write a detailed research summary covering everything relevant to EXTRACT:
-- Exact ability/technique names and their precise mechanics step-by-step
-- Hard limitations, costs, and conditions (what CANNOT be done, drawbacks, stamina)
-- Power scaling: specific canonical feats with source citations
-- Key relationships, allegiances, and hidden loyalties
-- Timeline-critical events (mark future spoilers as [SPOILER])
-- Any contradictions or ambiguities between sources
+STEP 3 — EMIT a single LoreFinding describing what you found:
 
-Be exhaustive. Every specific rule and limitation matters to the story engine.
-End your summary with a list of successfully scraped URLs.
+- ``entity_name``: the canonical name from the EXTRACT target.
+- ``entity_type``: one of "character", "ability", "faction", "event", "world",
+  or "other". Pick the closest fit; use "other" if uncertain.
+- ``summary``: a 2-4 sentence synthesis of the most important canonical
+  facts. The keeper aggregates these across the swarm.
+
+Depending on entity_type, populate the relevant fields. Empty containers
+are fine for irrelevant axes — the keeper treats empty as "no data".
+
+For abilities / power systems:
+  ``canon_techniques`` (list of {name, mechanics, cost, limitations}),
+  ``weaknesses_and_counters``, ``combat_style``.
+  Be MECHANICALLY specific in mechanics + cost + limitations. The
+  storyteller uses these to write "powers shown bound, not naked" beats.
+
+For characters:
+  ``speech_patterns``, ``vocabulary_level``, ``verbal_tics``,
+  ``topics_to_avoid``, ``example_dialogue`` — voice profile.
+  ``minimum_competence`` — what this character ALWAYS can do (anti-Worf floor).
+  ``knows`` / ``suspects`` / ``doesnt_know`` — epistemic limits.
+
+For canon events:
+  ``in_world_date``, ``pressure_score`` (0-100 narrative urgency),
+  ``tier`` ("mandatory" / "high" / "medium"), ``playbook`` (rich beats).
+
+Universal:
+  ``spoilers`` — future-knowledge facts the OC must NOT reference yet.
+  ``sources`` — URLs you successfully scraped.
+  ``research_query`` — echo back the SEARCH QUERY you were given
+     (provenance for the keeper).
+
+Be exhaustive within the relevant fields. Every specific rule and
+limitation matters to the story engine. Do NOT include free-form prose
+outside the schema — the structured fields ARE your output.
 """,
         tools=[google_search, load_web_page],
         generate_content_config=types.GenerateContentConfig(

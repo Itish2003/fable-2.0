@@ -1,15 +1,96 @@
-from typing import Optional
+import logging
+from typing import Any, Optional
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
+from google.adk.tools.base_tool import BaseTool
+from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 
 from src.tools.archivist_tools import ARCHIVIST_TOOLS
 
+logger = logging.getLogger("fable.archivist")
+
 # We use the highly efficient gemini-3.1-flash-lite model as requested
 ARCHIVIST_MODEL = "gemini-3.1-flash-lite"
+
+# Per-chapter tool-call caps. The archivist's mode='AUTO' + soft prompt
+# rules ("never call same tool with same args twice") fails to bound
+# tool calls because the model varies args slightly to evade the
+# text-equality check. Result: 596 calls in one chapter, 64 LLM
+# round-trips, 640K tokens.
+#
+# These caps are hard limits enforced via before_tool_callback. When a
+# tool exceeds its cap, the callback returns a synthetic "exhausted"
+# response WITHOUT running the actual tool. The model sees the response
+# and learns the tool is closed; combined with the existing instruction,
+# this terminates the loop.
+_ARCHIVIST_TOOL_CAPS = {
+    "update_relationship":       8,   # one per active character is generous
+    "update_character_voice":    6,   # voices for canon characters who spoke
+    "commit_lore":               6,   # genuinely-new entities only
+    "track_power_strain":        4,   # rare; only on costly ability use
+    "add_pending_consequence":   5,   # consequences worth queuing
+    "advance_timeline":          1,   # at most once per chapter
+    "record_divergence":         3,   # significant canon-altering events
+    "materialize_butterfly_effect": 2,
+    "advance_event_status":      4,
+    "mark_knowledge_violation":  3,
+    "mark_power_scaling_violation": 3,
+    "report_violation":          3,
+    "report_leakage":            3,
+}
+_COUNTER_KEY = "temp:archivist_tool_calls"
+
+
+async def _cap_archivist_tools(
+    tool: BaseTool,
+    args: dict[str, Any],
+    tool_context: ToolContext,
+) -> Optional[dict]:
+    """before_tool_callback: enforce per-chapter tool-call caps.
+
+    Returning a non-None dict short-circuits the actual tool call and
+    uses the dict as the tool's response. The model sees the synthetic
+    "capped" response and stops calling that tool.
+    """
+    name = tool.name
+    cap = _ARCHIVIST_TOOL_CAPS.get(name)
+    if cap is None:
+        return None  # uncapped tool; let it through
+
+    counts: dict = dict(tool_context.state.get(_COUNTER_KEY) or {})
+    used = int(counts.get(name, 0))
+    if used >= cap:
+        logger.warning(
+            "archivist: %s capped at %d (this chapter); short-circuiting.",
+            name, cap,
+        )
+        return {
+            "capped": True,
+            "tool": name,
+            "calls_this_chapter": used,
+            "cap": cap,
+            "message": (
+                f"{name} has been called {used} times this chapter (cap={cap}). "
+                f"Do NOT call {name} again. Either move on to a different tool "
+                f"or emit your final summary text."
+            ),
+        }
+    counts[name] = used + 1
+    tool_context.state[_COUNTER_KEY] = counts
+    return None  # let the tool run normally
+
+
+def reset_archivist_counters(state: Any) -> None:
+    """Reset per-chapter archivist counters. Hook into auditor's
+    AUDIT PASSED branch so each new chapter gets a fresh budget."""
+    try:
+        state[_COUNTER_KEY] = {}
+    except Exception:
+        pass
 
 
 async def _inject_chapter_prose(
@@ -86,6 +167,7 @@ def create_archivist_node() -> LlmAgent:
         ),
         tools=ARCHIVIST_TOOLS,
         before_model_callback=_inject_chapter_prose,
+        before_tool_callback=_cap_archivist_tools,
         generate_content_config=types.GenerateContentConfig(
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode='AUTO')

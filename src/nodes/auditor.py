@@ -154,6 +154,10 @@ async def run_auditor(
     # decoupled from the research_tools module if it's not loaded yet.
     from src.tools.research_tools import reset_research_counter
     reset_research_counter(ctx.state)
+    # Also reset the archivist's per-chapter tool-call counters so the
+    # next chapter starts with a fresh budget under the per-tool caps.
+    from src.nodes.archivist import reset_archivist_counters
+    reset_archivist_counters(ctx.state)
 
     # Phase G: source-universe leakage scan. Soft warning -- never blocks
     # the chapter (rewrites are user-initiated). Hits go into violation_log

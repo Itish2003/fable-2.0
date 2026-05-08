@@ -137,6 +137,17 @@ async def run_world_builder(
             ctx.state["story_premise"] = lore_string
             # Initialize the conversation log
             ctx.state["setup_conversation"] = [{"role": "user", "content": lore_string}]
+
+            # Per-session protagonist sentinel: every LoreEdge from "the
+            # protagonist" lives under this key in the LoreNode table.
+            # Without this, every story would share a single global
+            # "PROTAGONIST" node and trust edges from Story A would
+            # surface in Story B's lore_lookup. UUID4 keeps each story
+            # isolated; archivist_tools reads this via _protagonist_name.
+            if not ctx.state.get("protagonist_node_name"):
+                import uuid as _uuid
+                ctx.state["protagonist_node_name"] = "PROTAGONIST::" + _uuid.uuid4().hex
+
             builder_state["step"] = "wizard"
             ctx.state[state_key] = builder_state
 

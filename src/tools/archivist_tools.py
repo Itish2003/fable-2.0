@@ -13,10 +13,26 @@ from sqlalchemy import select
 logger = logging.getLogger("fable.tools")
 
 # Fable models a single-protagonist crossover narrative: every relationship
-# edge in the GraphRAG store has the user's character on one side. We use a
-# canonical sentinel name so edges remain stable across sessions even though
-# the protagonist's display name lives in the free-form story_premise.
-PROTAGONIST_NODE_NAME = "PROTAGONIST"
+# edge in the GraphRAG store has the user's character on one side. The
+# sentinel name is now PER-SESSION ("PROTAGONIST::<session_uuid>") to
+# prevent Story A's relationships from bleeding into Story B's lore_lookup
+# results -- previously every story shared a single global "PROTAGONIST"
+# node and Tatsuya-trust edges from one story would surface in another.
+# The session_id-scoped name is written into state by world_builder at
+# story init; archivist tools resolve it from state via _protagonist_name().
+_PROTAGONIST_STATE_KEY = "protagonist_node_name"
+_PROTAGONIST_PREFIX = "PROTAGONIST::"
+
+
+def _protagonist_name(state) -> str:
+    """Return the per-session protagonist node name. Falls back to the
+    legacy global "PROTAGONIST" sentinel only if state hasn't been
+    initialised yet (shouldn't happen in normal flow; world_builder
+    sets the key on every new story)."""
+    name = state.get(_PROTAGONIST_STATE_KEY) if hasattr(state, "get") else None
+    if name and isinstance(name, str) and name.startswith(_PROTAGONIST_PREFIX):
+        return name
+    return "PROTAGONIST"  # legacy fallback
 
 # Trust shifts smaller than this aren't persisted as graph edges — they're
 # already tracked at fine resolution in state.active_characters[*].trust_level.
@@ -86,8 +102,9 @@ async def update_relationship(
     # two endpoints can traverse this edge during search.
     if abs(trust_delta) >= LORE_EDGE_TRUST_THRESHOLD:
         try:
+            protagonist_name = _protagonist_name(tool_context.state)
             async with AsyncSessionLocal() as db:
-                proto = await _upsert_lore_node(db, PROTAGONIST_NODE_NAME)
+                proto = await _upsert_lore_node(db, protagonist_name)
                 target = await _upsert_lore_node(db, target_name)
 
                 stmt = select(LoreEdge).where(
@@ -102,11 +119,11 @@ async def update_relationship(
                         source_id=proto.id,
                         target_id=target.id,
                         relationship_type=disposition,
-                        visibility_whitelist=[PROTAGONIST_NODE_NAME, target_name],
+                        visibility_whitelist=[protagonist_name, target_name],
                     ))
                 else:
                     edge.relationship_type = disposition
-                    edge.visibility_whitelist = [PROTAGONIST_NODE_NAME, target_name]
+                    edge.visibility_whitelist = [protagonist_name, target_name]
 
                 await db.commit()
         except Exception as e:

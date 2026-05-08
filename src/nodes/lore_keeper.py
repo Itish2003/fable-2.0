@@ -257,6 +257,24 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
 # State Injection Node
 # ---------------------------------------------------------------------------
 
+def _extract_universes_from_drafts(output: LoreKeeperOutput) -> list[str]:
+    """Pull universe titles from power_sources[*].universe so Phase G's
+    leakage scan has the canonical list. Deduplicates while preserving
+    the order that mentions arrived in.
+    """
+    seen: list[str] = []
+    seen_lower: set[str] = set()
+    for s in output.power_sources or []:
+        u = (getattr(s, "universe", "") or "").strip()
+        if not u:
+            continue
+        key = u.lower()
+        if key not in seen_lower:
+            seen_lower.add(key)
+            seen.append(u)
+    return seen
+
+
 def _write_substrate(ctx: Context, output: LoreKeeperOutput) -> None:
     """Write every Phase C substrate field into ctx.state.
 
@@ -264,7 +282,14 @@ def _write_substrate(ctx: Context, output: LoreKeeperOutput) -> None:
     runtime shape (Dict[str, T] for char-keyed maps, lists for everything
     else). Empty lists fall through and leave the state's default-empty
     structures in place — enrichment turns can replace them later.
+
+    Also populates ``state.universes`` (Phase G) from the universes
+    referenced in power_sources, so the leakage scan has the canonical
+    list instead of falling back to substring heuristics.
     """
+    universes = _extract_universes_from_drafts(output)
+    if universes:
+        ctx.state["universes"] = universes
     if output.canon_timeline_events:
         ctx.state["canon_timeline"] = {
             "events": [e.model_dump() for e in output.canon_timeline_events],

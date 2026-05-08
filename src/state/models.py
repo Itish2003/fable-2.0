@@ -164,5 +164,16 @@ class FableAgentState(BaseModel):
         description="Multi-persona graph (civilian / hero / vigilante / etc.) with known_by / suspected_by / linked_to edges.",
     )
 
+    # Setup wizard conversation log (Phase D) — list of {role, content} entries.
+    setup_conversation: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Multi-turn USER/AI dialogue persisted as hard creative direction; consumed by query_planner.",
+    )
+    # Universe slugs / titles (Phase G) — drives source-universe leakage scan.
+    universes: List[str] = Field(
+        default_factory=list,
+        description="Story universes (e.g. 'Jujutsu Kaisen', 'The Irregular at Magic High School'). Populated by lore_keeper from research summaries.",
+    )
+
     # Auditor violation history (written by the report_violation tool)
     violation_log: List[Dict[str, Any]] = Field(default_factory=list, description="Audit trail of canon/tone violations flagged during play.")

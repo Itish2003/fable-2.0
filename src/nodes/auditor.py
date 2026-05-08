@@ -129,10 +129,11 @@ async def run_auditor(
     # (defensive: user_choice_input has fallback choices).
     if chapter_meta is not None:
         ctx.state["last_chapter_meta"] = chapter_meta.model_dump()
-    else:
-        # Don't overwrite a previous turn's meta with None; only clear it
-        # when a parse explicitly fails so the next turn can detect drift.
-        ctx.state["last_chapter_meta"] = None
+    # NOTE: when the model drops the JSON tail, leave last_chapter_meta
+    # untouched. user_choice_input has its own fallback choices, and
+    # overwriting with None would erase the previous turn's structured
+    # data on a transient parse failure -- a real data-loss bug caught
+    # in the Phase A-G audit.
 
     # Reset the retry counter so future failures start fresh.
     ctx.state[_AUDIT_RETRY_KEY] = 0

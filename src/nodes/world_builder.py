@@ -67,8 +67,8 @@ free-text "Other" hint). Return strictly JSON, no markdown fences.
 """
 
 
-def _generate_wizard_question(premise: str) -> dict | None:
-    """Synchronous direct genai call. Returns None on failure (graceful fallback)."""
+async def _generate_wizard_question(premise: str) -> dict | None:
+    """Async direct genai call (uses client.aio so it doesn't block the loop)."""
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         logger.warning("Setup wizard: no GOOGLE_API_KEY/GEMINI_API_KEY; skipping interrogation.")
@@ -76,7 +76,7 @@ def _generate_wizard_question(premise: str) -> dict | None:
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
-        resp = client.models.generate_content(
+        resp = await client.aio.models.generate_content(
             model=_WIZARD_MODEL,
             contents=_WIZARD_PROMPT + (premise or "(no premise provided)"),
             config=types.GenerateContentConfig(
@@ -147,7 +147,7 @@ async def run_world_builder(
 
         if not resume_payload:
             premise = ctx.state.get("story_premise", "")
-            wizard_q = _generate_wizard_question(premise)
+            wizard_q = await _generate_wizard_question(premise)
             if wizard_q is None:
                 # Graceful skip: no API key or LLM failure. Persist a
                 # synthetic note so downstream consumers aren't surprised.

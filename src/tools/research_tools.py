@@ -54,7 +54,7 @@ async def _direct_research(topic: str) -> Optional[str]:
         from google import genai
         from google.genai import types as gtypes
         client = genai.Client(api_key=api_key)
-        resp = client.models.generate_content(
+        resp = await client.aio.models.generate_content(
             model=_RESEARCH_MODEL,
             contents=_RESEARCH_PROMPT + topic,
             config=gtypes.GenerateContentConfig(

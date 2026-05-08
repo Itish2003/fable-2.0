@@ -18,9 +18,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 logger = logging.getLogger("fable.state.chapter_output")
 
@@ -85,7 +85,12 @@ class ChapterOutput(BaseModel):
     """Full structured tail emitted after the prose."""
 
     summary: str = Field(description="5-10 sentence summary of the chapter.")
-    choices: list[Choice] = Field(description="Exactly 4 choices.")
+    choices: list[Choice] = Field(
+        ...,
+        min_length=4,
+        max_length=4,
+        description="Exactly 4 typed choices, one of each tier (canon/divergence/character/wildcard).",
+    )
     choice_timeline_notes: TimelineNotes
     timeline: TimelineMeta
     canon_elements_used: list[str] = Field(default_factory=list)
@@ -93,8 +98,24 @@ class ChapterOutput(BaseModel):
     stakes_tracking: StakesTracking
     character_voices_used: list[str] = Field(default_factory=list)
     questions: list[ChapterQuestion] = Field(
-        description="1-2 questions shaping the next chapter's tone or pacing.",
+        ...,
+        min_length=1,
+        max_length=2,
+        description="1-2 meta-questions shaping the next chapter's tone / pacing.",
     )
+
+    @model_validator(mode="after")
+    def _validate_tier_coverage(self):
+        """Each chapter must surface all 4 tiers exactly once.
+        The prompt enforces this; this validator catches drift in production."""
+        tiers = {c.tier for c in self.choices}
+        required = set(get_args(ChoiceTier))
+        if tiers != required:
+            raise ValueError(
+                f"choices must cover all 4 tiers exactly once; got {sorted(tiers)}"
+            )
+        return self
+
 
 
 # ─── Tail parsing ────────────────────────────────────────────────────────────

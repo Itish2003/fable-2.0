@@ -78,6 +78,15 @@ them, do NOT re-fetch what's already in context, do NOT contradict them.
       mechanics you need to ground in canon
     - A named technique you intend to depict in this chapter
 
+**ON-DEMAND TOOL — `trigger_research(topic)`:**
+  When `lore_lookup` returns no matches AND the entity is essential to the
+  scene you're writing, call `trigger_research("<specific query>")` to do a
+  fresh google_search synthesis. Strict budget: 2 calls per chapter. Use
+  for things like "PRT ENE leadership Director Piggot Brockton Bay" or
+  "Yotsuba Clan internal politics 2095 Shiba branch" — narrow, targeted,
+  not a vague universe-level search. The result is auto-persisted so
+  later chapters can pick it up via `lore_lookup`.
+
   DO NOT call `lore_lookup` for entities already covered in the injected
   active-character block. DO NOT call it speculatively. One or two targeted
   lookups per chapter is the norm; ten is a smell.
@@ -375,7 +384,7 @@ def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
 
     lines = []
     for ev in upcoming[:12]:
-        marker = _tier_marker(str(ev.get("tier", "medium")))
+        marker = _tier_marker(ev.get("tier", "medium"))
         name = ev.get("name", "(unnamed event)")
         date = ev.get("in_world_date", "")
         date_part = f" — {date}" if date else ""

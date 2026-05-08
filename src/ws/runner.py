@@ -118,10 +118,10 @@ async def _emit_chapter_meta(session_id: str, user_id: str) -> None:
             meta = {
                 "summary": "(chapter completed; structured tail missing — fallback)",
                 "choices": [
-                    {"text": "Continue cautiously into the next scene.", "tier": "character", "tied_event": None},
-                    {"text": "Investigate the most recent disturbance.", "tier": "character", "tied_event": None},
-                    {"text": "Take an unexpected risk that breaks pattern.", "tier": "wildcard", "tied_event": None},
                     {"text": "Confront the most pressing canon thread head-on.", "tier": "canon", "tied_event": None},
+                    {"text": "Step away from canon's pull and chart your own course.", "tier": "divergence", "tied_event": None},
+                    {"text": "Lean into a personal relationship or internal conflict.", "tier": "character", "tied_event": None},
+                    {"text": "Take an unexpected risk that breaks pattern.", "tier": "wildcard", "tied_event": None},
                 ],
                 "questions": [],
             }

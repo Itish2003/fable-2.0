@@ -202,42 +202,19 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
             message: data.message,
           });
 
-          if (data.interrupt_id === 'user_choice_selection') {
-            try {
-              const parsed = JSON.parse(data.message) as {
-                choices?: Array<{
-                  text: string;
-                  tier: ChoiceTier;
-                  tied_event?: string | null;
-                }>;
-                questions?: ChapterQuestion[];
-              };
-              const incoming = Array.isArray(parsed.choices) ? parsed.choices : [];
-              const normalized: Choice[] = incoming.map((c) => ({
-                text: String(c.text ?? ''),
-                tier: c.tier,
-                tied_event: c.tied_event ?? null,
-              }));
-              setChoices(normalized);
-              setChoicePrompt('');
-              setPendingQuestions(Array.isArray(parsed.questions) ? parsed.questions : []);
-            } catch {
-              setChoices([]);
-              setChoicePrompt('');
-              setPendingQuestions([]);
-            }
-          } else {
-            setChoices([]);
-            setChoicePrompt('');
-            setPendingQuestions([]);
-          }
+          // Setup HITLs (lore_dump / wizard / configuration / world_primer)
+          // never carry choices in their message body. Chapter choices now
+          // arrive via the chapter_meta WS frame (Option A). Reset here.
+          setChoices([]);
+          setChoicePrompt('');
+          setPendingQuestions([]);
 
-          // Ensure prose has a clean break before the prompt
+          // Ensure prose has a clean break before the prompt (setup HITLs only).
           if (
             data.interrupt_id !== 'setup_lore_dump' &&
+            data.interrupt_id !== 'setup_wizard_question' &&
             data.interrupt_id !== 'setup_configuration' &&
-            data.interrupt_id !== 'setup_world_primer' &&
-            data.interrupt_id !== 'user_choice_selection'
+            data.interrupt_id !== 'setup_world_primer'
           ) {
             setProseAndFragment('system', `\n\n> *${data.message}*\n\n`);
           }

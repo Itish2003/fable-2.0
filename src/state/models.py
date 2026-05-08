@@ -118,8 +118,9 @@ class FableAgentState(BaseModel):
         default=None,
         description=(
             "Per-meta-question answers from the chapter's questions[] panel. "
-            "Written by user_choice_input_node on resume; consumed by the "
-            "storyteller's before_model_callback next turn to shape tone/style."
+            "Written by execute_adk_turn as state_delta on the next chapter's "
+            "run_async; consumed by the storyteller's before_model_callback "
+            "next turn to shape tone/style."
         ),
     )
     last_story_text: str = Field(default="", description="The raw prose generated in the previous turn.")

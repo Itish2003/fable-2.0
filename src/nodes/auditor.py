@@ -51,7 +51,7 @@ async def run_auditor(
     Also splits the Storyteller's prose-plus-fenced-JSON output into the
     player-facing prose (written to ``state.last_story_text``) and the
     structured ChapterOutput dict (written to ``state.last_chapter_meta``)
-    consumed downstream by ``user_choice_input_node``.
+    consumed downstream by the runner's chapter_meta WS frame.
     """
     # Fetch state from the public to_dict() snapshot.
     try:

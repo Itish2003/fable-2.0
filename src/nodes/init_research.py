@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Any, List
 
@@ -38,7 +37,9 @@ class QueryPlan(BaseModel):
 
 # ---------------------------------------------------------------------------
 # 1. Query Planner Node
-# output_schema is safe here because query_planner has no tools.
+# Declarative output_schema + output_key. The structured QueryPlan is
+# parsed by ADK and written to state.query_plan; the parser node below
+# reads it directly without any defensive multi-path fallback.
 # ---------------------------------------------------------------------------
 
 def create_query_planner() -> LlmAgent:
@@ -47,6 +48,7 @@ def create_query_planner() -> LlmAgent:
         description="Analyzes the Fable premise and produces a structured research plan.",
         model="gemini-3.1-flash-lite",
         output_schema=QueryPlan,
+        output_key="query_plan",
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json"
         ),
@@ -74,87 +76,46 @@ Return a QueryPlan with a targets array. One target per entity. Be exhaustive.
 
 # ---------------------------------------------------------------------------
 # 2. Query Parser Node
-# Converts QueryPlan structured output into the List[str] the parallel swarm needs.
+# Reads state.query_plan (written by the planner's output_key) and
+# converts it to the List[str] the parallel swarm fans out over.
 # ---------------------------------------------------------------------------
 
 @node(name="query_parser")
 def parse_queries(ctx: Context, node_input: Any) -> List[str]:
-    logger.info("Parsing Query Planner output...")
+    plan = ctx.state.get("query_plan") or {}
+    targets = plan.get("targets") or []
 
-    def _targets_to_queries(targets: list) -> List[str]:
-        out = []
-        for t in targets:
-            if isinstance(t, ResearchTarget):
-                out.append(f"ENTITY: {t.entity}\nSEARCH QUERY: {t.query}\nEXTRACT: {t.focus}")
-            elif isinstance(t, dict):
-                out.append(
-                    f"ENTITY: {t.get('entity', 'Unknown')}\n"
-                    f"SEARCH QUERY: {t.get('query', '')}\n"
-                    f"EXTRACT: {t.get('focus', '')}"
-                )
-        return out
+    if not targets:
+        premise = ctx.state.get("story_premise", "Fable Story")
+        logger.warning(
+            "Query Planner produced no targets (state.query_plan=%r). "
+            "Using single premise fallback.", plan,
+        )
+        return [
+            f"ENTITY: Unknown\nSEARCH QUERY: {premise} lore wiki\n"
+            "EXTRACT: world rules, power systems, key characters"
+        ]
 
-    def _parse_plan_dict(d: dict) -> List[str] | None:
-        """Handle QueryPlan dict: {targets: [...]} or bare list."""
-        if "targets" in d:
-            return _targets_to_queries(d["targets"])
-        return None
-
-    # Path 1a: Pydantic model on .output
-    out = getattr(node_input, "output", None)
-    if isinstance(out, QueryPlan):
-        queries = _targets_to_queries(out.targets)
-        logger.info("Query Planner structured output: %d targets.", len(queries))
-        return queries
-
-    # Path 1b: ADK workflow passes output_schema result as plain dict on .output
-    if isinstance(out, dict):
-        queries = _parse_plan_dict(out)
-        if queries:
-            logger.info("Query Planner dict output: %d targets.", len(queries))
-            return queries
-
-    # Path 1c: node_input itself is the dict (some ADK workflow wrappers)
-    if isinstance(node_input, dict):
-        queries = _parse_plan_dict(node_input)
-        if queries:
-            logger.info("Query Planner raw dict node_input: %d targets.", len(queries))
-            return queries
-
-    # Path 2: raw text content
-    text_output = ""
-    try:
-        content = getattr(node_input, "content", None)
-        if content and getattr(content, "parts", None):
-            text_output = content.parts[0].text.strip()
-            if text_output.startswith("```json"):
-                text_output = text_output.split("```json")[1].split("```")[0].strip()
-            elif text_output.startswith("```"):
-                text_output = text_output.split("```")[1].split("```")[0].strip()
-            parsed = json.loads(text_output)
-            if isinstance(parsed, list):
-                logger.info("Query Planner text fallback (list): %d queries.", len(parsed))
-                return parsed
-            if isinstance(parsed, dict):
-                queries = _parse_plan_dict(parsed)
-                if queries:
-                    logger.info("Query Planner text fallback (dict): %d targets.", len(queries))
-                    return queries
-    except Exception as e:
-        logger.error("Failed to parse Query Planner output: %s. Raw: %s", e, text_output)
-
-    premise = ctx.state.get("story_premise", "Fable Story")
-    logger.warning("Query Planner produced no parseable output. Using single premise fallback.")
-    return [f"ENTITY: Unknown\nSEARCH QUERY: {premise} lore wiki\nEXTRACT: world rules, power systems, key characters"]
+    queries = [
+        f"ENTITY: {t.get('entity', 'Unknown')}\n"
+        f"SEARCH QUERY: {t.get('query', '')}\n"
+        f"EXTRACT: {t.get('focus', '')}"
+        for t in targets
+        if isinstance(t, dict)
+    ]
+    logger.info("Query Planner produced %d targets.", len(queries))
+    return queries
 
 
 # ---------------------------------------------------------------------------
 # 3. Lore Hunter Node (Tool Agent)
 # ---------------------------------------------------------------------------
-# IMPORTANT: output_schema is MUTUALLY EXCLUSIVE with tools in ADK 2.0.
-# (Field docs: "when output_schema is set, agent can ONLY reply and CANNOT
-# use any tools.") The lore_hunter MUST use tools to scrape content, so it
-# outputs rich prose. The lore_keeper (no tools) synthesizes the structure.
+# NOTE: the previous in-line comment claiming output_schema is mutually
+# exclusive with tools is wrong for ADK 2.0 -- _OutputSchemaRequestProcessor
+# handles the combo via SetModelResponseTool. The lore_hunter still uses
+# the free-form prose shape today because the keeper consumes prose; if
+# the swarm output ever needs to be inspected per-entity, this is the
+# place to add an output_schema=LoreFinding (low-risk follow-up).
 
 def create_lore_hunter() -> LlmAgent:
     return LlmAgent(

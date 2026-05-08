@@ -132,6 +132,11 @@ def create_lore_keeper() -> LlmAgent:
         name="lore_keeper",
         description="Fuses raw wiki research into a structured World Bible for the Fable Engine.",
         model="gemini-3.1-flash-lite",
+        output_schema=LoreKeeperOutput,
+        output_key="lore_keeper_output",
+        generate_content_config=types.GenerateContentConfig(
+            response_mime_type="application/json"
+        ),
         instruction="""
 You are the Lore Keeper. You will receive an array of research summaries
 produced by the Lore Hunter Swarm. Synthesize them into a structured
@@ -184,10 +189,6 @@ empty arrays are fine when truly nothing applies):
 
 Return ONLY the JSON object. No markdown fences, no commentary.
 """,
-        output_schema=LoreKeeperOutput,
-        generate_content_config=types.GenerateContentConfig(
-            response_mime_type="application/json"
-        ),
     )
 
 
@@ -200,19 +201,27 @@ def create_fallback_extractor() -> LlmAgent:
         name="fallback_extractor",
         description="Explicitly extracts World Bible data from raw text when the primary agent fails.",
         model="gemini-3.1-flash-lite",
+        output_schema=WorldBibleExtraction,
+        output_key="world_bible_extraction",
+        generate_content_config=types.GenerateContentConfig(response_mime_type="application/json"),
         instruction="""Extract the forbidden concepts and anti-worf rules from the provided text.
 Output a JSON object with:
 - "forbidden_concepts": list of strings
 - "anti_worf_rules": list of objects, each with "character" and "rule" keys
 """,
-        output_schema=WorldBibleExtraction,
-        generate_content_config=types.GenerateContentConfig(response_mime_type="application/json")
     )
 
 
 @node(name="fallback_injector", rerun_on_resume=True)
 async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
-    """Injects the explicitly extracted JSON into the state."""
+    """Injects the fallback-extractor output into state.
+
+    Reads ``state.world_bible_extraction`` (written by the fallback
+    extractor's output_key) directly. Re-validates into
+    :class:`WorldBibleExtraction` so the typed surface lights up; on
+    parse failure, leave state as-is and surface the existing primer
+    text via HITL anyway.
+    """
     logger.info("Applying fallback extraction...")
 
     interrupt_id = "setup_world_primer"
@@ -221,28 +230,22 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
         yield Event(actions=EventActions(route="success"))
         return
 
-    def _apply_fallback(wb: WorldBibleExtraction) -> None:
-        ctx.state["forbidden_concepts"] = wb.forbidden_concepts
-        ctx.state["anti_worf_rules"] = {r.character: r.rule for r in wb.anti_worf_rules}
-        logger.info("Successfully populated state via fallback extractor.")
-
-    def _try_fallback_dict(d: dict) -> None:
+    raw = ctx.state.get("world_bible_extraction") or {}
+    if raw:
         try:
-            raw_rules = d.get("anti_worf_rules", [])
-            if raw_rules and isinstance(raw_rules[0], dict):
-                d = dict(d)
-                d["anti_worf_rules"] = [AntiWorfRule(**r) for r in raw_rules]
-            _apply_fallback(WorldBibleExtraction(**d))
+            rules = raw.get("anti_worf_rules") or []
+            if rules and isinstance(rules[0], dict):
+                raw = dict(raw)
+                raw["anti_worf_rules"] = [AntiWorfRule(**r) for r in rules]
+            wb = WorldBibleExtraction(**raw)
+            ctx.state["forbidden_concepts"] = wb.forbidden_concepts
+            ctx.state["anti_worf_rules"] = {r.character: r.rule for r in wb.anti_worf_rules}
+            logger.info(
+                "Fallback extraction applied: %d forbidden, %d anti-worf rules.",
+                len(wb.forbidden_concepts), len(wb.anti_worf_rules),
+            )
         except Exception as e:
-            logger.debug("Dict→WorldBibleExtraction failed: %s", e)
-
-    out = getattr(node_input, "output", None)
-    if isinstance(out, WorldBibleExtraction):
-        _apply_fallback(out)
-    elif isinstance(out, dict):
-        _try_fallback_dict(out)
-    elif isinstance(node_input, dict):
-        _try_fallback_dict(node_input)
+            logger.warning("WorldBibleExtraction re-validation failed: %s", e)
 
     if ctx.state.get("last_story_text"):
         logger.info("Fallback: mid-story enrichment, auto-routing to success.")
@@ -338,11 +341,12 @@ def _write_substrate(ctx: Context, output: LoreKeeperOutput) -> None:
 
 @node(name="lore_keeper_injector", rerun_on_resume=True)
 async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
-    """
-    Extract LoreKeeperOutput from node_input, populate the World Bible
-    substrate, then either suspend for user primer review (initial setup)
-    or auto-route to success (mid-story enrichment loops, defense-in-depth
-    even after enrich_node was deleted).
+    """Apply the lore keeper's structured output into canonical state.
+
+    Reads ``state.lore_keeper_output`` (written by the keeper's output_key)
+    and re-validates it into :class:`LoreKeeperOutput` so the typed
+    surface is available for the substrate writer. On any failure to
+    surface a primer, route to the fallback extractor.
     """
     interrupt_id = "setup_world_primer"
     if ctx.resume_inputs.get(interrupt_id):
@@ -350,65 +354,47 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         yield Event(actions=EventActions(route="success"))
         return
 
-    primer_text = None
-
-    def _apply_structured(output: LoreKeeperOutput) -> None:
-        nonlocal primer_text
-        primer_text = output.world_primer
-        ctx.state["forbidden_concepts"] = output.forbidden_concepts
-        ctx.state["anti_worf_rules"] = {r.character: r.rule for r in output.anti_worf_rules}
-        ctx.state["temp:crossover_primer"] = primer_text
-        _write_substrate(ctx, output)
-        logger.info(
-            "Lore Keeper output injected: primer=%d chars, %d forbidden, %d anti-worf, "
-            "%d timeline events, %d voices, %d power sources, %d integrity rules.",
-            len(primer_text or ""),
-            len(output.forbidden_concepts),
-            len(output.anti_worf_rules),
-            len(output.canon_timeline_events),
-            len(output.character_voices),
-            len(output.power_sources),
-            len(output.canon_character_integrity),
-        )
-
-    def _try_from_dict(d: dict) -> bool:
-        """Try to build LoreKeeperOutput from a plain dict (ADK workflow wraps output_schema as dict)."""
-        try:
-            raw_rules = d.get("anti_worf_rules", [])
-            if raw_rules and isinstance(raw_rules[0], dict):
-                d = dict(d)
-                d["anti_worf_rules"] = [AntiWorfRule(**r) for r in raw_rules]
-            output = LoreKeeperOutput(**d)
-            _apply_structured(output)
-            return True
-        except Exception as e:
-            logger.debug("Dict→LoreKeeperOutput failed: %s", e)
-            return False
-
-    out = getattr(node_input, "output", None)
-    if isinstance(out, LoreKeeperOutput):
-        _apply_structured(out)
-    elif isinstance(out, dict) and "world_primer" in out:
-        _try_from_dict(out)
-    elif isinstance(node_input, dict) and "world_primer" in node_input:
-        _try_from_dict(node_input)
-    elif getattr(node_input, "content", None):
-        for part in (node_input.content.parts or []):
-            text = getattr(part, "text", None)
-            if text:
-                primer_text = text
-                ctx.state["temp:crossover_primer"] = primer_text
-                logger.info("Lore Keeper raw text content injected into state.")
-                break
-
-    if not primer_text:
+    raw = ctx.state.get("lore_keeper_output") or {}
+    if not raw or "world_primer" not in raw:
         logger.warning(
-            "Lore Keeper produced no extractable output (node_input type=%s). "
-            "Routing to fallback extractor.",
-            type(node_input).__name__,
+            "Lore Keeper produced no extractable output (state.lore_keeper_output=%r). "
+            "Routing to fallback extractor.", type(raw).__name__,
         )
         yield Event(actions=EventActions(route="fallback"))
         return
+
+    # Re-validate the parsed dict back into the Pydantic model so the
+    # typed substrate-writer below works against attribute access.
+    try:
+        rules = raw.get("anti_worf_rules") or []
+        if rules and isinstance(rules[0], dict):
+            raw = dict(raw)
+            raw["anti_worf_rules"] = [AntiWorfRule(**r) for r in rules]
+        output = LoreKeeperOutput(**raw)
+    except Exception as e:
+        logger.warning(
+            "LoreKeeperOutput re-validation failed: %s. Routing to fallback.", e,
+        )
+        yield Event(actions=EventActions(route="fallback"))
+        return
+
+    primer_text = output.world_primer
+    ctx.state["forbidden_concepts"] = output.forbidden_concepts
+    ctx.state["anti_worf_rules"] = {r.character: r.rule for r in output.anti_worf_rules}
+    ctx.state["temp:crossover_primer"] = primer_text
+    _write_substrate(ctx, output)
+
+    logger.info(
+        "Lore Keeper output injected: primer=%d chars, %d forbidden, %d anti-worf, "
+        "%d timeline events, %d voices, %d power sources, %d integrity rules.",
+        len(primer_text or ""),
+        len(output.forbidden_concepts),
+        len(output.anti_worf_rules),
+        len(output.canon_timeline_events),
+        len(output.character_voices),
+        len(output.power_sources),
+        len(output.canon_character_integrity),
+    )
 
     if ctx.state.get("last_story_text"):
         logger.info("Mid-story enrichment complete. Auto-routing to success (no HITL).")

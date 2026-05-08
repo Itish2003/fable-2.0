@@ -121,7 +121,7 @@ export default function HomeScreen({ onNewStory, onContinue }: HomeScreenProps) 
                   <button
                     onClick={() => onContinue(s.session_id)}
                     disabled={deletingId === s.session_id}
-                    className="flex-1 flex items-center gap-3 sm:gap-4 p-4 sm:p-5 text-left disabled:opacity-40 transition-opacity"
+                    className="flex-1 min-w-0 flex items-center gap-3 sm:gap-4 p-4 sm:p-5 text-left disabled:opacity-40 transition-opacity"
                   >
                     <div className="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
                       <BookOpen className="w-5 h-5 text-slate-500" />
@@ -191,16 +191,20 @@ export default function HomeScreen({ onNewStory, onContinue }: HomeScreenProps) 
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="flex flex-col items-center justify-between py-3 px-3 border-l border-slate-800 shrink-0 gap-1"
+                        className="flex flex-col items-center justify-between py-3 px-2 sm:px-3 border-l border-slate-800 shrink-0 gap-1"
                       >
                         <button
-                          onClick={() => setDeletingId(s.session_id)}
-                          className="p-1.5 rounded-lg text-slate-700 hover:text-rose-400 hover:bg-rose-900/20 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingId(s.session_id);
+                          }}
+                          className="p-3 sm:p-1.5 rounded-lg text-slate-400 sm:text-slate-700 hover:text-rose-400 hover:bg-rose-900/20 transition-colors sm:opacity-0 sm:group-hover:opacity-100"
                           title="Delete story"
+                          aria-label="Delete story"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-5 h-5 sm:w-3.5 sm:h-3.5" />
                         </button>
-                        <ChevronRight className="w-4 h-4 text-slate-700 group-hover:text-slate-400 transition-colors" />
+                        <ChevronRight className="hidden sm:block w-4 h-4 text-slate-700 group-hover:text-slate-400 transition-colors" />
                       </motion.div>
                     )}
                   </AnimatePresence>

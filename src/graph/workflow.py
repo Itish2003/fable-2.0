@@ -12,7 +12,6 @@ from src.nodes.recovery import run_recovery
 
 from src.nodes.init_research import create_query_planner, create_lore_hunter, parse_queries
 from src.nodes.lore_keeper import create_lore_keeper, inject_lore_to_state, create_fallback_extractor, fallback_injector
-from src.nodes.enrich_analyzer import enrich_analyzer_node
 
 # Phase 9: Narrative Intelligence Nodes
 from src.nodes.intent_router import run_intent_router
@@ -60,9 +59,6 @@ def build_fable_workflow() -> Workflow:
     fallback_extractor_agent = create_fallback_extractor()
     fallback_extractor_node = build_node(fallback_extractor_agent)
     fallback_injector_node = fallback_injector
-
-    # Enrich analyzer
-    enrich_node = enrich_analyzer_node
 
     # Phase 9 Nodes
     intent_router_node = run_intent_router
@@ -138,14 +134,13 @@ def build_fable_workflow() -> Workflow:
         (summarizer_parser_node, choice_generator_agent_node),
         (choice_generator_agent_node, choice_generator_parser_node),
 
-        # After waiting for user input, check if we need to enrich
-        (choice_generator_parser_node, enrich_node),
-
-        # Enrich analyzer checks for sparse state before looping back to intent router
-        (enrich_node, {
-            "enrich": query_planner_node,
-            "story": intent_router_node
-        })
+        # After waiting for user input, loop back to the intent router.
+        # Mid-game lore enrichment is handled inside the storyteller via
+        # ``lore_lookup`` tool calls + a ``before_model_callback`` that
+        # pre-injects facts for active characters -- not by re-entering
+        # the one-shot setup swarm. The deterministic graph topology is
+        # the ADK 2.0 idiom; knowledge management is per-agent.
+        (choice_generator_parser_node, intent_router_node),
     ]
 
     # 4. Create the Workflow Node.

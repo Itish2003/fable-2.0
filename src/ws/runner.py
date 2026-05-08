@@ -181,26 +181,27 @@ async def execute_adk_turn(
                 }, session_id)
                 continue
 
-            # 3. Handle Standard Events (Node Output) — gate on
-            #    partial / final so we stream chunks but don't double-emit
-            #    the final aggregated message.
+            # 3. Handle Standard Events (Node Output) — identify the inner
+            #    agent via `node_name` (Workflow wraps every event with
+            #    author='fable_main_workflow', so author is useless here).
+            #    Inner LlmAgents inside a Workflow run with stream=False, so
+            #    we emit the full final response as a single text_delta
+            #    rather than waiting for partials that never come.
             if event.content and event.content.parts:
                 text = event.content.parts[0].text
-                author = getattr(event, "author", "system")
+                node_name = getattr(event, "node_name", None) or getattr(event, "author", "system")
 
-                if author == "storyteller" and text:
-                    if event.partial:
-                        # Streaming chunk
+                if node_name == "storyteller" and text:
+                    if event.partial or event.is_final_response():
                         await manager.send_personal_message({
                             "type": "text_delta",
-                            "author": author,
+                            "author": "storyteller",
                             "text": text,
                         }, session_id)
-                    elif event.is_final_response():
-                        # Final aggregated response — `turn_complete` already
-                        # signals end-of-turn, so we don't re-emit prose here.
-                        pass
-                # Non-storyteller authors (archivist, etc.) stay silent.
+                # Non-storyteller nodes (archivist, summarizer, choice_generator,
+                # lore_keeper) stay silent — their output is JSON or tool calls,
+                # not prose for the player.
+            
 
             # 4. Handle Tool Calls via the public Event accessor.
             #    `EventActions.tool_calls` does not exist in ADK 2.0; function

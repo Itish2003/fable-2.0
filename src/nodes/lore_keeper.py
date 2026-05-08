@@ -141,6 +141,12 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
     elif isinstance(node_input, dict):
         _try_fallback_dict(node_input)
 
+    # Same setup-vs-enrichment guard as inject_lore_to_state.
+    if ctx.state.get("last_story_text"):
+        logger.info("Fallback: mid-story enrichment, auto-routing to success.")
+        yield Event(actions=EventActions(route="success"))
+        return
+
     primer_text = ctx.state.get("temp:crossover_primer", "World Primer Synthesis Complete (Fallback).")
     yield RequestInput(interrupt_id=interrupt_id, message=primer_text)
 
@@ -220,5 +226,13 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         yield Event(actions=EventActions(route="fallback"))
         return
 
-    # ── HITL: suspend for user review ─────────────────────────────────────
+    # ── HITL: suspend ONLY on initial setup, not on mid-story enrichment ─
+    # If a chapter has already been told, this is the enrich path looping
+    # back through the research swarm. Auto-approve silently so the player
+    # isn't forced to re-review the world primer mid-game.
+    if ctx.state.get("last_story_text"):
+        logger.info("Mid-story enrichment complete. Auto-routing to success (no HITL).")
+        yield Event(actions=EventActions(route="success"))
+        return
+
     yield RequestInput(interrupt_id=interrupt_id, message=primer_text)

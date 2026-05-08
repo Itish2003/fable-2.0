@@ -5,7 +5,6 @@ from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events import Event
 from google.adk.agents.llm_agent import LlmAgent
-from google.adk.agents.llm_agent_config import LlmAgentConfig
 from google.genai import types
 
 from src.state.models import FableAgentState
@@ -14,7 +13,7 @@ logger = logging.getLogger("fable.summarizer")
 
 
 def create_summarizer() -> LlmAgent:
-    config = LlmAgentConfig(
+    return LlmAgent(
         name="summarizer",
         description="Summarizes the previous chapter into 2 sentences.",
         model="gemini-3.1-flash-lite-preview",
@@ -23,9 +22,8 @@ def create_summarizer() -> LlmAgent:
         Read the provided story chapter and summarize its key events in exactly 2 concise sentences.
         Focus on major plot movements, character decisions, or consequences.
         Do not add any conversational text.
-        """
+        """,
     )
-    return LlmAgent.from_config(config, config_abs_path="")
 
 
 @node(name="summarizer_node")

@@ -53,6 +53,70 @@ async def create_story(req: CreateStoryRequest):
     return {"session_id": session_id}
 
 
+@app.get("/stories/{user_id}")
+async def list_stories(user_id: str):
+    """
+    Lists all sessions for a user that have at least a story premise set.
+    Used by the home screen to show resumable stories.
+    """
+    from src.services.session_manager import session_service
+    try:
+        response = await session_service.list_sessions(
+            app_name="fable_2_0",
+            user_id=user_id,
+        )
+        sessions = getattr(response, "sessions", response) or []
+    except Exception as e:
+        logger.error(f"Failed to list sessions for user {user_id}: {e}")
+        return {"stories": []}
+
+    stories = []
+    for s in sessions:
+        state = getattr(s, "state", None) or {}
+        raw_premise = state.get("story_premise") or ""
+        story_premise = raw_premise if isinstance(raw_premise, str) else str(raw_premise)
+        if not story_premise:
+            continue
+
+        power_debt = state.get("power_debt") or {}
+        power_debt_level = int(power_debt.get("strain_level", 0)) if isinstance(power_debt, dict) else 0
+        last_update = getattr(s, "last_update_time", None)
+
+        def _str(val: object, default: str = "Unknown") -> str:
+            return val if isinstance(val, str) else (str(val) if val else default)
+
+        stories.append({
+            "session_id": s.id,
+            "chapter": int(state.get("chapter_count") or 1),
+            "location": _str(state.get("current_location_node"), "Unknown"),
+            "mood": _str(state.get("current_mood"), "Neutral"),
+            "story_premise": story_premise[:150],
+            "setup_complete": bool(state.get("last_story_text", "")),
+            "power_debt_level": power_debt_level,
+            "last_update": last_update.isoformat() if hasattr(last_update, "isoformat") else (str(last_update) if last_update else None),
+        })
+
+    stories.sort(key=lambda x: x.get("last_update") or "", reverse=True)
+    return {"stories": stories}
+
+
+@app.delete("/stories/{user_id}/{session_id}")
+async def delete_story(user_id: str, session_id: str):
+    """Permanently removes a session from the ADK database."""
+    from src.services.session_manager import session_service
+    try:
+        await session_service.delete_session(
+            app_name="fable_2_0",
+            user_id=user_id,
+            session_id=session_id,
+        )
+        logger.info("Deleted session %s for user %s", session_id, user_id)
+        return {"status": "deleted"}
+    except Exception as e:
+        logger.error("Failed to delete session %s: %s", session_id, e)
+        raise HTTPException(status_code=500, detail="Failed to delete story")
+
+
 @app.websocket("/ws/story/{session_id}")
 async def story_websocket(websocket: WebSocket, session_id: str):
     """
@@ -60,13 +124,61 @@ async def story_websocket(websocket: WebSocket, session_id: str):
     """
     await manager.connect(websocket, session_id)
     try:
-        # Upon initial connection, trigger the WorldBuilder setup node
-        # ADK 2.0 Beta requires a new_message to start a root node traversal on a fresh session
-        task = asyncio.create_task(execute_adk_turn(
-            session_id=session_id,
-            message_text="/start"
-        ))
-        manager.register_task(session_id, task)
+        # Only trigger WorldBuilder on sessions that haven't started yet.
+        # Reconnecting to an in-progress story with /start injects "Begin Simulation"
+        # as a choice response, which corrupts the story flow.
+        from src.services.session_manager import session_service
+        from src.ws.runner import _emit_state_update
+        try:
+            existing = await session_service.get_session(
+                app_name="fable_2_0",
+                user_id="local_tester",
+                session_id=session_id,
+            )
+            is_fresh = not (existing and (existing.state or {}).get("story_premise"))
+        except Exception:
+            is_fresh = True
+
+        if is_fresh:
+            task = asyncio.create_task(execute_adk_turn(
+                session_id=session_id,
+                message_text="/start"
+            ))
+            manager.register_task(session_id, task)
+        else:
+            # Resumed session: push current state so the sidebar populates immediately.
+            await _emit_state_update(session_id=session_id, user_id="local_tester")
+
+            # Restore pending choices if the session is suspended at a HITL.
+            # Scan events in reverse — the last unresolved RequestInput is always
+            # at the tail (a resolved one has a response event after it).
+            try:
+                from google.adk.workflow.utils._workflow_hitl_utils import (  # noqa: PLC2701
+                    has_request_input_function_call,
+                    get_request_input_interrupt_ids,
+                )
+                events = getattr(existing, "events", None) or []
+                for event in reversed(events):
+                    if not has_request_input_function_call(event):
+                        continue
+                    ids = get_request_input_interrupt_ids(event)
+                    req_id = ids[0] if ids else "unknown"
+                    req_msg = "Please provide input."
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            fc = getattr(part, "function_call", None)
+                            if fc and getattr(fc, "id", None) == req_id:
+                                req_msg = (fc.args or {}).get("message", req_msg)
+                                break
+                    logger.info("Re-emitting pending HITL '%s' for resumed session %s", req_id, session_id)
+                    await manager.send_personal_message({
+                        "type": "request_input",
+                        "interrupt_id": req_id,
+                        "message": req_msg,
+                    }, session_id)
+                    break
+            except Exception:
+                logger.warning("Could not restore pending HITL for session %s", session_id, exc_info=True)
         
         while True:
             # Wait for client messages
@@ -137,4 +249,8 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             manager.register_task(session_id, task)
             
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Unexpected error in story_websocket for session %s", session_id)
+    finally:
         manager.disconnect(session_id)

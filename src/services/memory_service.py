@@ -27,6 +27,7 @@ from google.adk.memory.base_memory_service import BaseMemoryService, SearchMemor
 from google.adk.memory.memory_entry import MemoryEntry
 from google.adk.events.event import Event
 from google.adk.sessions.session import Session
+from google.genai import types
 
 from src.database import AsyncSessionLocal
 from src.state.lore_models import LoreNode, LoreEdge, LoreEmbedding
@@ -206,9 +207,11 @@ class FableLocalMemoryService(BaseMemoryService):
         for emb in embeddings[:5]:
             response.memories.append(
                 MemoryEntry(
-                    content=emb.chunk_text,
+                    content=types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=emb.chunk_text)],
+                    ),
                     author=f"Volume: {emb.volume}",
-                    timestamp="",
                 )
             )
 

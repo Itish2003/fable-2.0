@@ -3,17 +3,19 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Send,
   Activity,
+  AlertTriangle,
   Database,
   Cpu,
   Edit3,
+  Menu,
   Undo2,
   X,
   Sparkles,
-  AlertTriangle,
   Users,
   GitBranch,
   CircleDot,
   ServerCrash,
+  ChevronLeft,
 } from 'lucide-react';
 
 import type {
@@ -26,6 +28,7 @@ import type {
 } from '../hooks/useStory';
 
 interface StoryViewProps {
+  onBack: () => void;
   story: {
     isConnected: boolean;
     isTyping: boolean;
@@ -111,7 +114,7 @@ function fragmentClass(author: ProseFragment['author']): string {
   }
 }
 
-export default function StoryView({ story }: StoryViewProps) {
+export default function StoryView({ story, onBack }: StoryViewProps) {
   const {
     isConnected,
     isTyping,
@@ -130,6 +133,7 @@ export default function StoryView({ story }: StoryViewProps) {
   } = story;
 
   const [inputText, setInputText] = useState('');
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('lore');
   const [rewriteOpen, setRewriteOpen] = useState(false);
   const [rewriteText, setRewriteText] = useState('');
@@ -186,11 +190,29 @@ export default function StoryView({ story }: StoryViewProps) {
   return (
     <div className="flex h-screen w-full bg-slate-950 overflow-hidden text-slate-100">
 
+      {/* Mobile sidebar backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-30 md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
       {/* LEFT SIDEBAR: tabbed Lore / Cast / Divergences */}
-      <aside className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex">
-        <div className="p-4 border-b border-slate-800 flex items-center space-x-2">
-          <Database className="w-5 h-5 text-indigo-400" />
-          <h2 className="font-semibold tracking-wide text-slate-200">Story Telemetry</h2>
+      <aside className={`flex-col w-80 max-w-[85vw] bg-slate-900 border-r border-slate-800 ${
+        mobileSidebarOpen ? 'fixed inset-y-0 left-0 z-40 flex' : 'hidden md:flex'
+      }`}>
+        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Database className="w-5 h-5 text-indigo-400" />
+            <h2 className="font-semibold tracking-wide text-slate-200">Story Telemetry</h2>
+          </div>
+          <button
+            onClick={() => setMobileSidebarOpen(false)}
+            className="md:hidden p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
 
         {/* Tab strip */}
@@ -231,9 +253,27 @@ export default function StoryView({ story }: StoryViewProps) {
       <main className="flex-1 flex flex-col relative">
         {/* Header */}
         <header className="absolute top-0 inset-x-0 bg-gradient-to-b from-slate-950 to-transparent z-10 pointer-events-none">
-          <div className="flex items-start justify-between px-6 pt-3 gap-3">
-            {/* Left: Strain bar */}
-            <div className="pointer-events-auto">
+          <div className="flex items-start justify-between px-4 md:px-6 pt-3 gap-2 md:gap-3">
+
+            {/* Left: back + mobile sidebar toggle */}
+            <div className="flex items-center gap-2 pointer-events-auto">
+              <button
+                onClick={onBack}
+                className="flex items-center gap-1.5 text-xs text-slate-600 hover:text-slate-300 transition-colors py-1.5"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Stories</span>
+              </button>
+              <button
+                onClick={() => setMobileSidebarOpen(true)}
+                className="md:hidden flex items-center gap-1 text-xs text-slate-600 hover:text-slate-300 transition-colors py-1.5 px-2 rounded-lg hover:bg-slate-800/50"
+              >
+                <Menu className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Center: strain bar — desktop only */}
+            <div className="pointer-events-auto hidden md:block mt-8">
               {storyState !== null && (
                 <StrainBar level={storyState.power_debt_level} />
               )}
@@ -241,25 +281,36 @@ export default function StoryView({ story }: StoryViewProps) {
 
             {/* Right: connection pill + info row */}
             <div className="flex flex-col items-end gap-2 pointer-events-auto">
-              <div className="flex items-center space-x-2 text-sm bg-slate-900/80 px-3 py-1.5 rounded-full border border-slate-800 backdrop-blur-sm">
+              <div className="flex items-center gap-1.5 text-xs bg-slate-900/80 px-2.5 md:px-3 py-1.5 rounded-full border border-slate-800 backdrop-blur-sm">
                 {isConnected ? (
                   <>
-                    <Cpu className={`w-4 h-4 ${isTyping ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+                    <Cpu className={`w-3.5 h-3.5 md:w-4 md:h-4 ${isTyping ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
                     <span className={isTyping ? 'text-emerald-400' : 'text-slate-400'}>
-                      {isTyping ? 'Engine Running...' : 'Engine Idle'}
+                      {isTyping ? 'Running...' : 'Idle'}
                     </span>
                   </>
                 ) : (
                   <>
-                    <ServerCrash className="w-4 h-4 text-rose-500" />
+                    <ServerCrash className="w-3.5 h-3.5 md:w-4 md:h-4 text-rose-500" />
                     <span className="text-rose-500">Disconnected</span>
                   </>
                 )}
               </div>
-
-              {storyState !== null && <InfoRow state={storyState} />}
+              {storyState !== null && (
+                <div className="hidden md:block">
+                  <InfoRow state={storyState} />
+                </div>
+              )}
             </div>
+
           </div>
+
+          {/* Mobile: strain bar below the header row */}
+          {storyState !== null && (
+            <div className="md:hidden px-4 pb-1 pointer-events-auto">
+              <StrainBar level={storyState.power_debt_level} />
+            </div>
+          )}
         </header>
 
         {/* Prose Area */}
@@ -267,8 +318,8 @@ export default function StoryView({ story }: StoryViewProps) {
           <div className="max-w-3xl mx-auto prose prose-invert prose-slate prose-lg">
             <div className="whitespace-pre-wrap leading-relaxed tracking-wide font-serif">
               {proseFragments.length === 0 ? (
-                <span className="text-slate-300">
-                  {prose || 'Connecting to the ADK Narrative Engine...'}
+                <span className="text-slate-600 italic">
+                  {prose || (isTyping ? 'Igniting the narrative engine...' : 'Reconnected. Type your next action or use the input below to continue.')}
                 </span>
               ) : (
                 proseFragments.map((f) => (

@@ -2,90 +2,200 @@ import json
 import logging
 from typing import Any, List
 
+from pydantic import BaseModel, Field
+from google.genai import types
+
 from google.adk.workflow import node
 from google.adk.agents.context import Context
-from google.adk.events.event import Event
 from google.adk.agents.llm_agent import LlmAgent
-from google.adk.agents.llm_agent_config import LlmAgentConfig
-from google.adk.tools.google_search_tool import GoogleSearchTool
+from google.adk.tools import google_search
 from google.adk.tools.load_web_page import load_web_page
 
 logger = logging.getLogger("fable.init_research")
 
+
 # ---------------------------------------------------------------------------
-# 1. Query Planner Node (LLM Agent)
+# Output schemas
+# ---------------------------------------------------------------------------
+
+class ResearchTarget(BaseModel):
+    entity: str = Field(
+        description="Exact character, ability, faction, or power system name from the story premise"
+    )
+    query: str = Field(
+        description="Precise Google search query targeting wiki or fandom sources for this entity"
+    )
+    focus: str = Field(
+        description="What to extract: specific power mechanics, hard limitations, canon feats, relationships"
+    )
+
+
+class QueryPlan(BaseModel):
+    targets: List[ResearchTarget] = Field(
+        description="One entry per distinct named entity requiring canonical research"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1. Query Planner Node
+# output_schema is safe here because query_planner has no tools.
 # ---------------------------------------------------------------------------
 
 def create_query_planner() -> LlmAgent:
-    planner_config = LlmAgentConfig(
+    return LlmAgent(
         name="query_planner",
-        description="Analyzes the Fable premise and extracts necessary research queries.",
+        description="Analyzes the Fable premise and produces a structured research plan.",
         model="gemini-3.1-flash-lite-preview",
+        output_schema=QueryPlan,
+        generate_content_config=types.GenerateContentConfig(
+            response_mime_type="application/json"
+        ),
         instruction="""
-        You are a Research Query Planner.
-        Analyze the user's story premise. Identify ANY concepts, character names, or powers 
-        that need to be researched from external wikis to ensure canonical accuracy.
-        
-        OUTPUT FORMAT:
-        Return ONLY a raw JSON array of strings representing Google search queries.
-        Do not use markdown blocks. Do not add conversational text.
-        
-        Example:
-        ["Jujutsu Kaisen Gojo Limitless technique mechanics", "Mahouka Tatsuya Shiba powerset"]
-        """
+You are a Research Query Planner for a crossover fanfiction engine.
+
+Analyze the story premise and identify EVERY named:
+- Character (protagonist, antagonist, supporting cast, rivals)
+- Ability, technique, or power system (e.g. "Limitless", "Ten Shadows")
+- Faction, organization, or school
+- Any source material that requires external research for canonical accuracy
+
+For each entity produce a ResearchTarget:
+- entity: the exact canonical name (e.g. "Satoru Gojo", "Tatsuya Shiba")
+- query: a precise Google search query that will find wiki content
+  (always include source title + entity + "wiki", e.g.
+   "Jujutsu Kaisen Satoru Gojo fandom wiki abilities")
+- focus: the specific information needed
+  (e.g. "exact mechanics of Infinity, what can bypass it, stamina cost, canon feats")
+
+Return a QueryPlan with a targets array. One target per entity. Be exhaustive.
+""",
     )
-    return LlmAgent.from_config(planner_config, config_abs_path="")
+
 
 # ---------------------------------------------------------------------------
-# 2. JSON Array Parser Node
+# 2. Query Parser Node
+# Converts QueryPlan structured output into the List[str] the parallel swarm needs.
 # ---------------------------------------------------------------------------
-# The LLM outputs text. We need a fast Python node to cast it to an actual List
-# so the ADK `parallel_worker=True` wrapper knows how to iterate over it.
 
 @node(name="query_parser")
 def parse_queries(ctx: Context, node_input: Any) -> List[str]:
     logger.info("Parsing Query Planner output...")
+
+    def _targets_to_queries(targets: list) -> List[str]:
+        out = []
+        for t in targets:
+            if isinstance(t, ResearchTarget):
+                out.append(f"ENTITY: {t.entity}\nSEARCH QUERY: {t.query}\nEXTRACT: {t.focus}")
+            elif isinstance(t, dict):
+                out.append(
+                    f"ENTITY: {t.get('entity', 'Unknown')}\n"
+                    f"SEARCH QUERY: {t.get('query', '')}\n"
+                    f"EXTRACT: {t.get('focus', '')}"
+                )
+        return out
+
+    def _parse_plan_dict(d: dict) -> List[str] | None:
+        """Handle QueryPlan dict: {targets: [...]} or bare list."""
+        if "targets" in d:
+            return _targets_to_queries(d["targets"])
+        return None
+
+    # Path 1a: Pydantic model on .output
+    out = getattr(node_input, "output", None)
+    if isinstance(out, QueryPlan):
+        queries = _targets_to_queries(out.targets)
+        logger.info("Query Planner structured output: %d targets.", len(queries))
+        return queries
+
+    # Path 1b: ADK workflow passes output_schema result as plain dict on .output
+    if isinstance(out, dict):
+        queries = _parse_plan_dict(out)
+        if queries:
+            logger.info("Query Planner dict output: %d targets.", len(queries))
+            return queries
+
+    # Path 1c: node_input itself is the dict (some ADK workflow wrappers)
+    if isinstance(node_input, dict):
+        queries = _parse_plan_dict(node_input)
+        if queries:
+            logger.info("Query Planner raw dict node_input: %d targets.", len(queries))
+            return queries
+
+    # Path 2: raw text content
     text_output = ""
     try:
-        if hasattr(node_input, "content") and node_input.content and node_input.content.parts:
-            text_output = node_input.content.parts[0].text.strip()
-            
-            # Clean markdown if present
+        content = getattr(node_input, "content", None)
+        if content and getattr(content, "parts", None):
+            text_output = content.parts[0].text.strip()
             if text_output.startswith("```json"):
                 text_output = text_output.split("```json")[1].split("```")[0].strip()
             elif text_output.startswith("```"):
                 text_output = text_output.split("```")[1].split("```")[0].strip()
-                
-            queries = json.loads(text_output)
-            if isinstance(queries, list):
-                logger.info(f"Generated {len(queries)} queries for the Swarm.")
-                return queries
+            parsed = json.loads(text_output)
+            if isinstance(parsed, list):
+                logger.info("Query Planner text fallback (list): %d queries.", len(parsed))
+                return parsed
+            if isinstance(parsed, dict):
+                queries = _parse_plan_dict(parsed)
+                if queries:
+                    logger.info("Query Planner text fallback (dict): %d targets.", len(queries))
+                    return queries
     except Exception as e:
-        logger.error(f"Failed to parse Query Planner JSON: {e}. Output was: {text_output}")
-    
-    # Fallback
+        logger.error("Failed to parse Query Planner output: %s. Raw: %s", e, text_output)
+
     premise = ctx.state.get("story_premise", "Fable Story")
-    return [f"{premise} lore and worldbuilding"]
+    logger.warning("Query Planner produced no parseable output. Using single premise fallback.")
+    return [f"ENTITY: Unknown\nSEARCH QUERY: {premise} lore wiki\nEXTRACT: world rules, power systems, key characters"]
 
 
 # ---------------------------------------------------------------------------
 # 3. Lore Hunter Node (Tool Agent)
 # ---------------------------------------------------------------------------
+# IMPORTANT: output_schema is MUTUALLY EXCLUSIVE with tools in ADK 2.0.
+# (Field docs: "when output_schema is set, agent can ONLY reply and CANNOT
+# use any tools.") The lore_hunter MUST use tools to scrape content, so it
+# outputs rich prose. The lore_keeper (no tools) synthesizes the structure.
 
 def create_lore_hunter() -> LlmAgent:
-    hunter_config = LlmAgentConfig(
+    return LlmAgent(
         name="lore_hunter",
-        description="Executes a single search query and synthesizes the findings.",
+        description="Deep-scrapes wiki sources for one research target and returns canonical findings.",
         model="gemini-3.1-flash-lite-preview",
         instruction="""
-        You are a Lore Hunter. You will receive a specific search query.
-        1. Use the google_search tool to find high-quality wiki sources.
-        2. Use load_web_page to read the actual wiki content if necessary.
-        3. Output a detailed summary of the power mechanics, limitations, and character history found.
-        Focus on specific rules and limitations that a Storyteller LLM would need to know.
-        """
+You are a Lore Hunter. You will receive a research target with three fields:
+- ENTITY: the character, ability, or faction to research
+- SEARCH QUERY: the exact Google search query to execute
+- EXTRACT: what specific information to pull from the sources
+
+Follow these steps EXACTLY. Do NOT skip or abbreviate any step.
+
+STEP 1 — SEARCH:
+Call google_search with the provided SEARCH QUERY.
+From the results, identify the top 3 wiki URLs (prefer fandom.com, wikia.com, or official wikis).
+Do NOT stop here — search snippets contain less than 5% of actual page content.
+
+STEP 2 — SCRAPE (MANDATORY, NO EXCEPTIONS):
+For EACH of the top 3 URLs, call load_web_page to fetch the full page content.
+If a URL is inaccessible or errors, move to the next candidate.
+You MUST successfully load at least 2 pages before synthesizing.
+Using only search snippets without loading pages is a failure condition.
+
+STEP 3 — SYNTHESIZE from scraped content (not snippets):
+Write a detailed research summary covering everything relevant to EXTRACT:
+- Exact ability/technique names and their precise mechanics step-by-step
+- Hard limitations, costs, and conditions (what CANNOT be done, drawbacks, stamina)
+- Power scaling: specific canonical feats with source citations
+- Key relationships, allegiances, and hidden loyalties
+- Timeline-critical events (mark future spoilers as [SPOILER])
+- Any contradictions or ambiguities between sources
+
+Be exhaustive. Every specific rule and limitation matters to the story engine.
+End your summary with a list of successfully scraped URLs.
+""",
+        tools=[google_search, load_web_page],
+        generate_content_config=types.GenerateContentConfig(
+            tool_config=types.ToolConfig(
+                include_server_side_tool_invocations=True
+            )
+        ),
     )
-    agent = LlmAgent.from_config(hunter_config, config_abs_path="")
-    # Attach native ADK tools for web access
-    agent.tools = [GoogleSearchTool(bypass_multi_tools_limit=True), load_web_page]
-    return agent

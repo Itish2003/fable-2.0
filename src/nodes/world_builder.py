@@ -1,7 +1,9 @@
 from typing import Any, AsyncGenerator
 from google.adk.workflow import node
 from google.adk.agents.context import Context
+from google.adk.events import Event
 from google.adk.events.request_input import RequestInput
+from google.genai import types
 import json
 import logging
 
@@ -85,4 +87,10 @@ async def run_world_builder(
         ctx.state["forbidden_concepts"] = []
         ctx.state["anti_worf_rules"] = {}
         
-        # We no longer yield setup_complete here, as the graph continues to the Swarm.
+        # Pass premise as content so query_planner receives it as node_input.
+        yield Event(
+            content=types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=ctx.state["story_premise"])],
+            )
+        )

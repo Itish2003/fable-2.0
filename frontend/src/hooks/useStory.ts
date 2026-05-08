@@ -70,8 +70,7 @@ function assertNever(x: never): never {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 
-export function useStory() {
-  const [sessionId, setSessionId] = useState<string | null>(null);
+export function useStory(sessionId: string | null, isResumed: boolean = false) {
   const [isConnected, setIsConnected] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isResearching, setIsResearching] = useState(false);
@@ -82,7 +81,7 @@ export function useStory() {
   const [choices, setChoices] = useState<Choice[]>([]);
   const [choicePrompt, setChoicePrompt] = useState<string>('');
   const [loreUpdates, setLoreUpdates] = useState<LoreStatus[]>([]);
-  const [setupComplete, setSetupComplete] = useState(false);
+  const [setupComplete, setSetupComplete] = useState(isResumed);
   const [invocationHistory, setInvocationHistory] = useState<string[]>([]);
   const [storyState, setStoryState] = useState<StoryStateData | null>(null);
 
@@ -113,25 +112,7 @@ export function useStory() {
     appendFragment(author, text);
   }, [appendFragment]);
 
-  // 1. Initialize Session
-  useEffect(() => {
-    async function initSession() {
-      try {
-        const res = await fetch(`${API_BASE}/stories`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: 'local_tester' })
-        });
-        const data = await res.json();
-        setSessionId(data.session_id);
-      } catch (err) {
-        console.error('Failed to create session:', err);
-      }
-    }
-    initSession();
-  }, []);
-
-  // 2. Manage WebSocket Connection (with reconnect)
+  // Manage WebSocket Connection (with reconnect)
   useEffect(() => {
     if (!sessionId) return;
 
@@ -149,13 +130,9 @@ export function useStory() {
       switch (data.type) {
         case 'text_delta': {
           setIsTyping(true);
-          // Honor the author tag: storyteller text is the narrator voice,
-          // anything else (e.g. status-injected updates) renders in the
-          // system tone.
           const author: ProseFragment['author'] =
             data.author && data.author !== 'storyteller' ? 'system' : 'narrator';
           setProseAndFragment(author, data.text);
-          // If we are getting text deltas, we are definitely done with setup
           setSetupComplete(true);
           break;
         }
@@ -340,6 +317,7 @@ export function useStory() {
     // Once primer is approved, we are waiting for the storyteller, no longer researching
     if (pendingInput.interrupt_id === 'setup_world_primer') {
       setIsResearching(false);
+      setSetupComplete(true);
     }
 
     setIsTyping(true);

@@ -6,7 +6,6 @@ from google.adk.workflow import node
 from google.adk.agents.context import Context
 from google.adk.events.request_input import RequestInput
 from google.adk.agents.llm_agent import LlmAgent
-from google.adk.agents.llm_agent_config import LlmAgentConfig
 
 logger = logging.getLogger("fable.choice_generator")
 
@@ -16,7 +15,7 @@ _ALLOWED_TIERS = {None, "oblivious", "uneasy", "suspicious", "breakthrough"}
 
 
 def create_choice_generator() -> LlmAgent:
-    config = LlmAgentConfig(
+    return LlmAgent(
         name="choice_generator",
         description="Generates 4 interactive choices based on the latest story chapter.",
         model="gemini-3.1-flash-lite-preview",
@@ -40,9 +39,8 @@ def create_choice_generator() -> LlmAgent:
         - Always set "tier" to null on every choice. The Suspicion plugin overrides
           this downstream when applicable; you must not invent tier strings.
         - Do NOT use markdown code fences. Do NOT add conversational text.
-        """
+        """,
     )
-    return LlmAgent.from_config(config, config_abs_path="")
 
 
 def _normalize_choice(raw: Any) -> dict:

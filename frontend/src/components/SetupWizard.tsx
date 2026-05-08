@@ -15,16 +15,21 @@ interface SetupWizardProps {
 }
 
 // ─── Step Indicator ───────────────────────────────────────────────────────────
-function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
-  const steps = ['Premise', 'Research', 'Review'] as const;
+function StepIndicator({ current }: { current: 1 | 2 | 3 | 4 }) {
+  // Phase D: 4-step setup flow.
+  //   1 Premise — user pastes character framework + configures simulation
+  //   2 Refine  — wizard asks one fusion-mechanic clarifying question
+  //   3 Research — lore-hunter swarm runs against the universes/power sources
+  //   4 Review  — user approves the synthesised World Primer
+  const steps = ['Premise', 'Refine', 'Research', 'Review'] as const;
   return (
-    <div className="flex items-center justify-center gap-2 py-4 px-6 border-b border-slate-800">
+    <div className="flex items-center justify-center gap-1 sm:gap-2 py-4 px-6 border-b border-slate-800">
       {steps.map((label, idx) => {
         const step = idx + 1;
         const done = step < current;
         const active = step === current;
         return (
-          <div key={label} className="flex items-center gap-2">
+          <div key={label} className="flex items-center gap-1 sm:gap-2">
             <div className="flex flex-col items-center gap-1">
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
@@ -45,9 +50,9 @@ function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
                 {label}
               </span>
             </div>
-            {step < 3 && (
+            {step < steps.length && (
               <div
-                className={`w-12 h-px mb-4 transition-colors ${
+                className={`w-8 sm:w-12 h-px mb-4 transition-colors ${
                   done ? 'bg-emerald-500/40' : 'bg-slate-800'
                 }`}
               />
@@ -106,12 +111,22 @@ export default function SetupWizard({
   const [powerLevel, setPowerLevel] = useState('city');
   const [storyTone, setStoryTone] = useState('balanced');
   const [isolatePowerset, setIsolatePowerset] = useState(true);
+  const [wizardChoice, setWizardChoice] = useState('');
+  const [wizardCustom, setWizardCustom] = useState('');
 
   const isLoreDump = pendingInput?.interrupt_id === 'setup_lore_dump';
+  const isWizard = pendingInput?.interrupt_id === 'setup_wizard_question';
   const isConfig = pendingInput?.interrupt_id === 'setup_configuration';
   const isPrimer = pendingInput?.interrupt_id === 'setup_world_primer';
 
-  const currentStep: 1 | 2 | 3 = isPrimer ? 3 : isResearching ? 2 : 1;
+  // Phase D: 4-step indicator. Refine (step 2) is the new wizard pause.
+  const currentStep: 1 | 2 | 3 | 4 = isPrimer
+    ? 4
+    : isResearching
+    ? 3
+    : isWizard
+    ? 2
+    : 1;
 
   const handleSubmitLore = () => {
     if (!loreDump.trim()) return;
@@ -222,6 +237,100 @@ export default function SetupWizard({
             </div>
           </motion.div>
         )}
+
+        {/* ── WIZARD INTERROGATION ── */}
+        {isWizard && (() => {
+          let q: { question: string; context: string; options: string[] } = {
+            question: 'Refine your setup',
+            context: '',
+            options: [],
+          };
+          try {
+            q = JSON.parse(pendingInput.message);
+          } catch { /* keep defaults */ }
+          const submitWizardAnswer = () => {
+            const picked = wizardChoice === '__custom__' ? wizardCustom.trim() : wizardChoice;
+            if (!picked) return;
+            submitInput(picked);
+            setWizardChoice('');
+            setWizardCustom('');
+          };
+          return (
+            <motion.div
+              key="wizard"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, x: -50 }}
+              className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <StepIndicator current={2} />
+              <div className="bg-slate-950/50 p-6 border-b border-slate-800">
+                <h1 className="text-2xl sm:text-3xl font-serif text-slate-100 flex items-center gap-3">
+                  <Sparkles className="w-7 h-7 text-indigo-400" />
+                  <span>Refine the Crossover</span>
+                </h1>
+                <p className="mt-2 text-slate-400 text-sm">
+                  One clarifying question — your answer becomes a hard creative-direction constraint for the rest of the story.
+                </p>
+              </div>
+              <div className="p-6 space-y-5">
+                <div className="text-slate-100 text-base font-medium leading-snug">{q.question}</div>
+                {q.context && (
+                  <div className="text-xs italic text-slate-500">{q.context}</div>
+                )}
+                <div className="space-y-2">
+                  {q.options.map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setWizardChoice(opt)}
+                      className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${
+                        wizardChoice === opt
+                          ? 'bg-indigo-600/30 border-indigo-500 text-indigo-100'
+                          : 'bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setWizardChoice('__custom__')}
+                    className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${
+                      wizardChoice === '__custom__'
+                        ? 'bg-indigo-600/30 border-indigo-500 text-indigo-100'
+                        : 'bg-slate-950 border-slate-700 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    Other / write my own answer…
+                  </button>
+                </div>
+                {wizardChoice === '__custom__' && (
+                  <textarea
+                    value={wizardCustom}
+                    onChange={(e) => setWizardCustom(e.target.value)}
+                    placeholder="Type your custom answer…"
+                    className="w-full h-24 bg-slate-950 border border-slate-700 rounded-lg p-3 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 resize-none"
+                  />
+                )}
+                <div className="flex justify-end">
+                  <button
+                    onClick={submitWizardAnswer}
+                    disabled={
+                      !isConnected ||
+                      !wizardChoice ||
+                      (wizardChoice === '__custom__' && !wizardCustom.trim())
+                    }
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span>Continue</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          );
+        })()}
 
         {/* ── CONFIGURATION ── */}
         {isConfig && (

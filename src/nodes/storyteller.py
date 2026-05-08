@@ -653,6 +653,53 @@ async def _inject_active_character_lore(
                 framework_lines.append(f"[{role.upper()}] {content}")
         blocks.append("\n".join(framework_lines))
 
+    # 0.5. PRIOR CHAPTER CONTEXT — continuity across chapters.
+    # Per-chapter run_async invocations are independent; ADK's
+    # EventsCompactionConfig may have summarised prior events thinly. We
+    # explicitly thread continuity by injecting the rolling chapter
+    # summaries + the closing prose of the most recent chapter + the
+    # user's choice that triggered this turn. Without this block,
+    # chapter 2 can read like a new vignette instead of a continuation
+    # of chapter 1.
+    chapter_summaries = state.get("chapter_summaries") or []
+    last_story_text = state.get("last_story_text") or ""
+    last_user_choice = state.get("last_user_choice") or ""
+    last_user_q_answers = state.get("last_user_question_answers") or {}
+
+    if chapter_summaries or last_story_text or last_user_choice:
+        ctx_lines: list[str] = ["PRIOR CHAPTER CONTEXT — this chapter is a CONTINUATION."]
+        if chapter_summaries:
+            ctx_lines.append("")
+            ctx_lines.append("─── Chapter summaries so far (oldest -> newest) ───")
+            # Keep the last 5; older summaries fade.
+            for i, summary in enumerate(chapter_summaries[-5:], start=max(1, len(chapter_summaries) - 4)):
+                ctx_lines.append(f"Ch.{i}: {str(summary)[:500]}")
+        if last_story_text:
+            tail = last_story_text[-1500:] if len(last_story_text) > 1500 else last_story_text
+            ctx_lines.append("")
+            ctx_lines.append("─── Closing prose of the most recent chapter (tonal anchor) ───")
+            if len(last_story_text) > 1500:
+                ctx_lines.append("…[earlier prose elided]")
+            ctx_lines.append(tail)
+        if last_user_choice:
+            ctx_lines.append("")
+            ctx_lines.append("─── Player\'s choice that triggered THIS chapter ───")
+            ctx_lines.append(str(last_user_choice)[:600])
+        if last_user_q_answers:
+            ctx_lines.append("")
+            ctx_lines.append("─── Player\'s tone/style preferences for THIS chapter ───")
+            for q, a in last_user_q_answers.items():
+                ctx_lines.append(f"• {str(q)[:200]}: {str(a)[:200]}")
+        ctx_lines.append("")
+        ctx_lines.append(
+            "Open the chapter so it picks up directly from the closing prose above. "
+            "Honor the player\'s choice as the FIRST narrative beat — do not delay or "
+            "circumvent it. State changes (active_characters trust shifts, pending "
+            "consequences, power_debt strain, divergences) carry forward and must be "
+            "reflected as ongoing reality, not retconned."
+        )
+        blocks.append("\n".join(ctx_lines))
+
     # 1. Known facts about active characters (existing behavior)
     if active_characters:
         char_blocks: list[str] = []

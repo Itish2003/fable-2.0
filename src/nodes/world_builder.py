@@ -30,7 +30,7 @@ logger = logging.getLogger("fable.worldbuilder")
 # a fusion-mechanic / identity / timeline-anchor ambiguity in the user's
 # premise, NOT vague flavor.
 
-_WIZARD_MODEL = "gemini-3.1-flash-lite-preview"
+_WIZARD_MODEL = "gemini-3.1-flash-lite"
 
 _WIZARD_PROMPT = """You are the Setup Wizard for a crossover fanfiction engine.
 

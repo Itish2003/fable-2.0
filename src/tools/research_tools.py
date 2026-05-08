@@ -25,7 +25,7 @@ from src.utils.sanitizer import sanitize_context
 
 logger = logging.getLogger("fable.research_tools")
 
-_RESEARCH_MODEL = "gemini-3.1-flash-lite-preview"
+_RESEARCH_MODEL = "gemini-3.1-flash-lite"
 _MAX_RESEARCH_CALLS_PER_CHAPTER = 2
 _COUNTER_KEY = "temp:research_calls_this_chapter"
 

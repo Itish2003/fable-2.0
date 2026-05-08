@@ -45,7 +45,7 @@ def create_query_planner() -> LlmAgent:
     return LlmAgent(
         name="query_planner",
         description="Analyzes the Fable premise and produces a structured research plan.",
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         output_schema=QueryPlan,
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json"
@@ -160,7 +160,7 @@ def create_lore_hunter() -> LlmAgent:
     return LlmAgent(
         name="lore_hunter",
         description="Deep-scrapes wiki sources for one research target and returns canonical findings.",
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         instruction="""
 You are a Lore Hunter. You will receive a research target with three fields:
 - ENTITY: the character, ability, or faction to research

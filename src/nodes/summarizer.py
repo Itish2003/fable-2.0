@@ -16,7 +16,7 @@ def create_summarizer() -> LlmAgent:
     return LlmAgent(
         name="summarizer",
         description="Summarizes the previous chapter into 2 sentences.",
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         instruction="""
         You are a Narrative Summarizer.
         Read the provided story chapter and summarize its key events in exactly 2 concise sentences.

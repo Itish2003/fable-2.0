@@ -17,7 +17,7 @@ from src.services.session_manager import session_service
 
 # Same lightweight model the archivist/summarizer nodes use — keeps
 # compaction summaries fast and consistent with the rest of the graph.
-COMPACTION_MODEL = "gemini-3.1-flash-lite-preview"
+COMPACTION_MODEL = "gemini-3.1-flash-lite"
 
 # 1. Build the ADK 2.0 Graph Workflow
 fable_main_workflow = build_fable_workflow()

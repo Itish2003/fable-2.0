@@ -12,8 +12,8 @@ from google.genai import types
 from src.tools.lore_lookup_tool import lore_lookup, retrieve_lore
 from src.tools.research_tools import trigger_research
 
-# We use the highly efficient gemini-3.1-flash-lite-preview model as requested
-STORYTELLER_MODEL = "gemini-3.1-flash-lite-preview"
+# We use the highly efficient gemini-3.1-flash-lite model as requested
+STORYTELLER_MODEL = "gemini-3.1-flash-lite"
 
 # Token budget for an 8,000-word chapter + JSON tail + tool-call overhead.
 # Sourced from FableWeaver v1's settings.storyteller_max_output_tokens

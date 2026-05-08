@@ -131,7 +131,7 @@ def create_lore_keeper() -> LlmAgent:
     return LlmAgent(
         name="lore_keeper",
         description="Fuses raw wiki research into a structured World Bible for the Fable Engine.",
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         instruction="""
 You are the Lore Keeper. You will receive an array of research summaries
 produced by the Lore Hunter Swarm. Synthesize them into a structured
@@ -199,7 +199,7 @@ def create_fallback_extractor() -> LlmAgent:
     return LlmAgent(
         name="fallback_extractor",
         description="Explicitly extracts World Bible data from raw text when the primary agent fails.",
-        model="gemini-3.1-flash-lite-preview",
+        model="gemini-3.1-flash-lite",
         instruction="""Extract the forbidden concepts and anti-worf rules from the provided text.
 Output a JSON object with:
 - "forbidden_concepts": list of strings

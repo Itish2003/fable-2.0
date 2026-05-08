@@ -4,8 +4,8 @@ from google.genai import types
 
 from src.tools.archivist_tools import ARCHIVIST_TOOLS
 
-# We use the highly efficient gemini-3.1-flash-lite-preview model as requested
-ARCHIVIST_MODEL = "gemini-3.1-flash-lite-preview"
+# We use the highly efficient gemini-3.1-flash-lite model as requested
+ARCHIVIST_MODEL = "gemini-3.1-flash-lite"
 
 
 def create_archivist_node() -> LlmAgent:

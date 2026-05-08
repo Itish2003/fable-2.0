@@ -1,7 +1,4 @@
 from google.adk.apps.app import App
-from google.adk.apps.compaction import EventsCompactionConfig
-from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
-from google.adk.models.google_llm import Gemini
 from google.adk.plugins.logging_plugin import LoggingPlugin
 from google.adk.runners import Runner
 
@@ -14,10 +11,6 @@ from src.plugins.suspicion_plugin import SuspicionPlugin
 from src.plugins.telemetry import TelemetryPlugin
 from src.services.memory_service import memory_service
 from src.services.session_manager import session_service
-
-# Same lightweight model the archivist/summarizer nodes use — keeps
-# compaction summaries fast and consistent with the rest of the graph.
-COMPACTION_MODEL = "gemini-3.1-flash-lite"
 
 # 1. Build the ADK 2.0 Graph Workflow
 fable_main_workflow = build_fable_workflow()
@@ -40,17 +33,21 @@ fable_app = App(
         # previously baked into TelemetryPlugin.
         LoggingPlugin(name="fable_logging"),
     ],
-    events_compaction_config=EventsCompactionConfig(
-        # Sliding-window compaction.
-        compaction_interval=20,
-        overlap_size=3,
-        # Token-threshold compaction.
-        token_threshold=15000,
-        event_retention_size=5,
-        # Explicit summarizer — required because root_agent is a Workflow,
-        # not an LlmAgent, so ADK's lazy default cannot resolve a model.
-        summarizer=LlmEventSummarizer(llm=Gemini(model=COMPACTION_MODEL)),
-    ),
+    # ADK auto-compaction (EventsCompactionConfig) is intentionally OFF.
+    # Reason: with Option A (per-chapter invocation_ids), each chapter is
+    # its own bounded run_async invocation; cross-chapter continuity is
+    # handled by the storyteller's PRIOR CHAPTER CONTEXT block + the
+    # LoreEmbedding chapter_summary::N recall path. Auto-compaction adds
+    # no value here AND triggers a known race in
+    # google/adk/apps/compaction.py: the compaction step calls
+    # session_service.append_event(session=...) using a session reference
+    # whose _storage_update_marker has gone stale after the 100+ tool-call
+    # events the archivist appended during the same turn -- raising
+    # 'The session has been modified in storage since it was loaded'.
+    # Within-chapter context bloat is bounded by gemini-3.1-flash-lite's
+    # native context window; archivist tool counts are also capped by
+    # mode='AUTO' + the explicit "NEVER call same tool with same args
+    # twice" rule in its instruction.
 )
 
 # 3. Initialize the Runner

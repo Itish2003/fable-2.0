@@ -28,6 +28,45 @@ from src.state.models import FableAgentState
 logger = logging.getLogger("fable.summarizer")
 
 
+async def _persist_chapter_summary_embedding(chapter_n: int, summary_text: str) -> None:
+    """Embed a chapter summary into LoreEmbedding so lore_lookup surfaces it.
+
+    Stored under a synthetic LoreNode named ``chapter_summary::<N>`` with
+    node_type='chapter_summary' so future searches can filter / prefer
+    these when the model asks "what happened in chapter N?". The
+    chunk_text bundles the chapter number + summary so semantic search
+    can find it via either the number ("Ch3", "chapter 3") or the
+    content ("Mahoraga encounter", "Tatsuya betrayal").
+    """
+    from sqlalchemy import select
+    from src.database import AsyncSessionLocal
+    from src.services.embedding_service import get_embedding
+    from src.state.lore_models import LoreEmbedding, LoreNode
+
+    payload = f"Chapter {chapter_n} summary:\n{summary_text}"
+    vec = await get_embedding(payload)
+    node_name = f"chapter_summary::{chapter_n}"
+    async with AsyncSessionLocal() as db:
+        stmt = select(LoreNode).where(LoreNode.name == node_name)
+        node = (await db.execute(stmt)).scalar_one_or_none()
+        if node is None:
+            node = LoreNode(
+                name=node_name,
+                node_type="chapter_summary",
+                attributes={"chapter": chapter_n},
+            )
+            db.add(node)
+            await db.flush()
+        db.add(LoreEmbedding(
+            node_id=node.id,
+            universe="story_internal",
+            volume="chapter_summaries",
+            chunk_text=payload,
+            embedding=vec,
+        ))
+        await db.commit()
+
+
 _SUMMARY_PROMPT = """Summarise the chapter below in exactly 2 concise sentences.
 Focus on major plot movements, character decisions, or consequences.
 Do NOT add conversational text. Do NOT reference chapters not in the text.
@@ -83,7 +122,16 @@ async def summarizer_node(ctx: Context, node_input: Any) -> AsyncGenerator[Event
         existing = list(state.chapter_summaries or [])
         existing.append(summary_text)
         ctx.state["chapter_summaries"] = existing
-        logger.info("Summary appended (%d total). New: %r", len(existing), summary_text[:80])
+        chapter_n = len(existing)  # the chapter we just summarised
+        logger.info("Summary appended (Ch%d total). New: %r", chapter_n, summary_text[:80])
+        # Embed the summary into LoreEmbedding so the storyteller can
+        # surface it via lore_lookup at chapter 10+ when the in-prompt
+        # recap window has rolled past it. Fire-and-forget; failure is
+        # non-fatal (the in-prompt recap is the primary path).
+        try:
+            await _persist_chapter_summary_embedding(chapter_n, summary_text)
+        except Exception as e:
+            logger.warning("Chapter summary embedding failed (Ch%d): %s", chapter_n, e)
 
     # Pass the chapter text forward so user_choice_input has it in scope
     # for any downstream rendering. Empty string is fine if no chapter yet.

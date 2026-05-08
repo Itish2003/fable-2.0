@@ -84,6 +84,13 @@ them, do NOT re-fetch what's already in context, do NOT contradict them.
       mechanics you need to ground in canon
     - A named technique you intend to depict in this chapter
 
+**ON-DEMAND TOOL — `lore_lookup(entity)` for past chapters:**
+  When you need details from a chapter that\'s rolled out of the recap window
+  (i.e. older than Chapter N-9), call `lore_lookup` with a query like
+  "chapter 3" or a specific named event/character. The summarizer_node
+  embeds every chapter summary into LoreEmbedding under the synthetic
+  node_name `chapter_summary::<N>`, so semantic search finds them.
+
 **ON-DEMAND TOOL — `trigger_research(topic)`:**
   When `lore_lookup` returns no matches AND the entity is essential to the
   scene you're writing, call `trigger_research("<specific query>")` to do a
@@ -670,10 +677,25 @@ async def _inject_active_character_lore(
         ctx_lines: list[str] = ["PRIOR CHAPTER CONTEXT — this chapter is a CONTINUATION."]
         if chapter_summaries:
             ctx_lines.append("")
-            ctx_lines.append("─── Chapter summaries so far (oldest -> newest) ───")
-            # Keep the last 5; older summaries fade.
-            for i, summary in enumerate(chapter_summaries[-5:], start=max(1, len(chapter_summaries) - 4)):
-                ctx_lines.append(f"Ch.{i}: {str(summary)[:500]}")
+            total_chapters = len(chapter_summaries)
+            # Inject the last 10 summaries verbatim; for stories longer than
+            # that, prepend a counter so the model knows older chapters exist
+            # and can recall them via lore_lookup ("Ch3 events", "Mahoraga
+            # encounter", etc.). The summarizer_node embeds every summary
+            # into LoreEmbedding under chapter_summary::N for semantic recall.
+            window = chapter_summaries[-10:]
+            window_start = max(1, total_chapters - len(window) + 1)
+            if window_start > 1:
+                ctx_lines.append(
+                    f"─── Chapters 1..{window_start - 1} ({window_start - 1} earlier "
+                    f"chapter(s)) — recap rolled out of window. To recall, call "
+                    f"`lore_lookup` with a query like 'chapter {window_start - 1}' or a "
+                    f"specific event name. ───"
+                )
+            ctx_lines.append(f"─── Chapter summaries Ch{window_start}..Ch{total_chapters} ───")
+            for offset, summary in enumerate(window):
+                n = window_start + offset
+                ctx_lines.append(f"Ch.{n}: {str(summary)[:500]}")
         if last_story_text:
             tail = last_story_text[-1500:] if len(last_story_text) > 1500 else last_story_text
             ctx_lines.append("")

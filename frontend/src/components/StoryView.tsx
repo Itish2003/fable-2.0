@@ -256,7 +256,7 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {sidebarTab === 'lore' && <LoreStreamPane loreUpdates={loreUpdates} />}
           {sidebarTab === 'cast' && <CastPane characters={storyState?.active_characters ?? null} />}
           {sidebarTab === 'divergences' && (
@@ -330,7 +330,7 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
         </header>
 
         {/* Prose Area */}
-        <div className="flex-1 overflow-y-auto pt-28 pb-8 px-6 md:px-12 lg:px-24">
+        <div className="flex-1 overflow-y-auto pt-24 pb-4 px-6 md:px-12 lg:px-24">
           <div className="max-w-3xl mx-auto prose prose-invert prose-slate prose-lg">
             <div className="whitespace-pre-wrap leading-relaxed tracking-wide font-serif">
               {proseFragments.length === 0 ? (
@@ -355,9 +355,12 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
           </div>
         </div>
 
-        {/* Input Area */}
-        <div className="p-6 bg-gradient-to-t from-slate-950 via-slate-950 to-transparent">
-          <div className="max-w-3xl mx-auto space-y-4">
+        {/* Input Area — capped to 50vh; choices + meta-questions + input
+            scroll internally so they can never dominate the chapter prose. */}
+        <div className="relative px-4 md:px-6 pt-4 pb-6 bg-gradient-to-t from-slate-950 via-slate-950 to-slate-950/0 max-h-[50vh] overflow-y-auto">
+          {/* Top fade so prose appears to flow behind the panel. */}
+          <div className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-slate-950 to-transparent" />
+          <div className="max-w-3xl mx-auto space-y-3">
 
             {/* Choice prompt header (legacy; usually empty for typed choices) */}
             {choicePrompt && choices.length > 0 && !isTyping && (
@@ -379,7 +382,7 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
 
             {/* Choices */}
             {choices.length > 0 && !isTyping && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
                 {choices.map((choice, idx) => (
                   <ChoiceButton
                     key={idx}
@@ -480,8 +483,8 @@ function SidebarTabButton({
       onClick={onClick}
       className={`flex-1 px-3 py-2 flex items-center justify-center gap-1.5 transition-colors border-b-2 ${
         active
-          ? 'border-indigo-500 text-indigo-300 bg-slate-900/60'
-          : 'border-transparent text-slate-500 hover:text-slate-300'
+          ? 'border-indigo-500 text-indigo-300 bg-slate-800'
+          : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'
       }`}
     >
       {icon}
@@ -662,22 +665,16 @@ function ChoiceButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`relative w-full p-3 text-sm text-left rounded-lg transition-colors border ${theme.base} ${theme.hover} ${theme.border} ${theme.text} disabled:opacity-50 disabled:cursor-not-allowed`}
+      title={choice.tied_event ? `Ties to: ${choice.tied_event}` : undefined}
+      className={`relative w-full px-3 py-2 text-[13px] text-left rounded-lg transition-colors border ${theme.base} ${theme.hover} ${theme.border} ${theme.text} disabled:opacity-50 disabled:cursor-not-allowed`}
     >
-      <span className="flex flex-col gap-1">
-        <span className="flex items-start gap-2">
-          <span className="flex-1 leading-snug">{choice.text}</span>
-          <span
-            className={`shrink-0 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full ${theme.badgeBg} ${theme.badgeText}`}
-          >
-            {theme.label}
-          </span>
+      <span className="flex items-start gap-2">
+        <span className="flex-1 leading-snug">{choice.text}</span>
+        <span
+          className={`shrink-0 text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full ${theme.badgeBg} ${theme.badgeText}`}
+        >
+          {theme.label}
         </span>
-        {choice.tied_event && (
-          <span className="text-[10px] uppercase tracking-widest text-slate-500">
-            ties to: <span className="text-slate-400">{choice.tied_event}</span>
-          </span>
-        )}
       </span>
     </button>
   );
@@ -710,20 +707,20 @@ function MetaQuestions({
   onAnswer: (question: string, option: string) => void;
 }) {
   return (
-    <div className="space-y-3 mb-4">
-      <p className="text-xs uppercase tracking-widest text-slate-500 font-semibold">
+    <div className="space-y-2 mb-2">
+      <p className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">
         Shape the next chapter
       </p>
       {questions.map((q) => (
         <div
           key={q.question}
-          className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2"
+          className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 space-y-1.5"
         >
-          <div className="text-sm text-slate-200 font-medium">{q.question}</div>
+          <div className="text-[13px] text-slate-200 leading-snug">{q.question}</div>
           {q.context && (
-            <div className="text-xs text-slate-500 italic">{q.context}</div>
+            <div className="text-[10px] text-slate-500 italic leading-snug">{q.context}</div>
           )}
-          <div className="flex flex-wrap gap-2 pt-1">
+          <div className="flex flex-wrap gap-1.5">
             {q.options.map((opt) => {
               const selected = answers[q.question] === opt;
               return (
@@ -731,7 +728,7 @@ function MetaQuestions({
                   key={opt}
                   type="button"
                   onClick={() => onAnswer(q.question, opt)}
-                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${
                     selected
                       ? 'bg-indigo-600/40 border-indigo-500 text-indigo-100'
                       : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:bg-slate-700/60'

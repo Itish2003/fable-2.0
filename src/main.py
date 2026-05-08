@@ -214,7 +214,19 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                         await manager.send_personal_message({"type": "error", "message": "Rewind failed."}, session_id)
                 continue
                 
-            # 2. Handle Rewrite Action
+            # 2. Handle Rewrite Action -- transactional Bible rollback (Phase E)
+            #
+            # ADK's runner.rewind_async already computes a state delta that
+            # reverses every state change since the target invocation, so the
+            # World Bible naturally rolls back to its pre-chapter shape. The
+            # one thing rewind cannot recover is the deleted chapter's prose
+            # itself -- after rewind, last_story_text is the PREVIOUS chapter.
+            # So we capture the original prose + previous summaries + the
+            # chapter number BEFORE rewinding, then pass them to the rewrite
+            # turn as reference context. The storyteller writes the SAME
+            # chapter number with the user's modifications applied -- not a
+            # different chapter. This matches v1's rewrite semantics in
+            # FableWeaver/src/ws/actions/rewrite.py.
             if data.get("action") == "rewrite":
                 invocation_id = data.get("invocation_id")
                 instruction = data.get("instruction")
@@ -223,18 +235,45 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                     manager.cancel_active_task(session_id)
                     try:
                         from src.app_container import fable_runner
+
+                        # Capture pre-rewind context so the rewrite prompt
+                        # has the original chapter text + prior summaries.
+                        original_chapter = ""
+                        prev_summaries: list[str] = []
+                        chapter_number = 0
+                        try:
+                            existing_session = await fable_runner.session_service.get_session(
+                                app_name="fable_2_0",
+                                user_id="local_tester",
+                                session_id=session_id,
+                            )
+                            pre_state = (existing_session.state or {}) if existing_session else {}
+                            original_chapter = str(pre_state.get("last_story_text", "") or "")
+                            chapter_number = int(pre_state.get("chapter_count", 0) or 0)
+                            summaries = pre_state.get("chapter_summaries") or []
+                            if isinstance(summaries, list):
+                                prev_summaries = [str(s) for s in summaries[-3:]]
+                        except Exception as snap_err:
+                            logger.warning(
+                                "Pre-rewind snapshot failed for %s: %s. "
+                                "Rewrite will proceed without original-chapter reference.",
+                                session_id, snap_err,
+                            )
+
                         await fable_runner.rewind_async(
                             user_id="local_tester",
                             session_id=session_id,
-                            rewind_before_invocation_id=invocation_id
+                            rewind_before_invocation_id=invocation_id,
                         )
                         await manager.send_personal_message({"type": "rewrite_started"}, session_id)
-                        
-                        # We trigger a new turn with the rewrite instruction
+
                         task = asyncio.create_task(
                             execute_adk_turn(
                                 session_id=session_id,
-                                rewrite_instruction=instruction
+                                rewrite_instruction=instruction,
+                                original_chapter=original_chapter,
+                                prev_summaries=prev_summaries,
+                                rewrite_chapter_number=chapter_number,
                             )
                         )
                         manager.register_task(session_id, task)

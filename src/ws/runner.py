@@ -105,6 +105,9 @@ async def execute_adk_turn(
     resume_payload: Optional[Any] = None,
     interrupt_id: Optional[str] = None,
     rewrite_instruction: Optional[str] = None,
+    original_chapter: Optional[str] = None,
+    prev_summaries: Optional[list[str]] = None,
+    rewrite_chapter_number: Optional[int] = None,
 ):
     """
     Executes a single turn of the ADK 2.0 graph.
@@ -126,9 +129,49 @@ async def execute_adk_turn(
 
     # 1. Prepare Input
     if rewrite_instruction:
+        # Phase E: transactional rewrite -- include the previous chapter
+        # summaries + the original chapter text (truncated) as reference
+        # context, plus the user's instruction. The storyteller writes the
+        # SAME chapter number; do NOT diverge into a different chapter.
+        prev_block = ""
+        if prev_summaries:
+            lines = [f"  - {s}" for s in prev_summaries if s]
+            if lines:
+                prev_block = (
+                    "\n\n──── PREVIOUS CHAPTER SUMMARIES (for arc continuity) ────\n"
+                    + "\n".join(lines)
+                )
+        original_block = ""
+        if original_chapter:
+            snippet = original_chapter[:3000]
+            ellipsis = "\n...(truncated; rewrite, do not copy verbatim)" if len(original_chapter) > 3000 else ""
+            original_block = (
+                "\n\n──── ORIGINAL CHAPTER (for reference -- DO NOT copy) ────\n"
+                + snippet + ellipsis
+            )
+        chap_label = (
+            f" Chapter {rewrite_chapter_number}"
+            if rewrite_chapter_number and rewrite_chapter_number > 0
+            else " this chapter"
+        )
+        rewrite_message = (
+            f"[SYSTEM REWRITE CONSTRAINT — REWRITE{chap_label}]\n\n"
+            f"USER'S CHANGES: {rewrite_instruction}\n\n"
+            f"REQUIREMENTS:\n"
+            f"  - Rewrite the SAME chapter ({chap_label.strip()}) with the user's "
+            f"modifications applied. Same plot beats, same characters, same setting, "
+            f"same timeline position.\n"
+            f"  - Apply the user's instruction throughout the rewrite.\n"
+            f"  - Use the World Bible state (which has been rolled back to the "
+            f"pre-chapter snapshot) as the source of truth for character / world "
+            f"detail. Treat injected enforcement blocks as authoritative.\n"
+            f"  - DO NOT write a different chapter. Do not skip ahead. Do not "
+            f"acknowledge this instruction in the prose."
+            f"{prev_block}{original_block}"
+        )
         run_kwargs["new_message"] = types.Content(
             role="user",
-            parts=[types.Part.from_text(text=f"[SYSTEM REWRITE CONSTRAINT]: {rewrite_instruction}")],
+            parts=[types.Part.from_text(text=rewrite_message)],
         )
     elif message_text and message_text != "/start":
         run_kwargs["new_message"] = types.Content(

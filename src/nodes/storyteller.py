@@ -10,6 +10,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from src.tools.lore_lookup_tool import lore_lookup, retrieve_lore
+from src.tools.research_tools import trigger_research
 
 # We use the highly efficient gemini-3.1-flash-lite-preview model as requested
 STORYTELLER_MODEL = "gemini-3.1-flash-lite-preview"
@@ -678,7 +679,7 @@ def create_storyteller_node() -> LlmAgent:
         description="Generates the core narrative prose and structured chapter tail.",
         model=STORYTELLER_MODEL,
         instruction=_STORYTELLER_INSTRUCTION,
-        tools=[lore_lookup],
+        tools=[lore_lookup, trigger_research],
         before_model_callback=_inject_active_character_lore,
         generate_content_config=types.GenerateContentConfig(
             max_output_tokens=STORYTELLER_MAX_OUTPUT_TOKENS,

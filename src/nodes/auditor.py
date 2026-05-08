@@ -117,6 +117,11 @@ async def run_auditor(
 
     # Reset the retry counter so future failures start fresh.
     ctx.state[_AUDIT_RETRY_KEY] = 0
+    # Phase F: reset per-chapter trigger_research budget so the next
+    # chapter gets a fresh 2-call cap. Lazy import keeps the auditor
+    # decoupled from the research_tools module if it's not loaded yet.
+    from src.tools.research_tools import reset_research_counter
+    reset_research_counter(ctx.state)
 
     # Explicitly yield the 'passed' route so the Workflow Graph can follow the edge
     yield Event(actions=EventActions(route="passed"))

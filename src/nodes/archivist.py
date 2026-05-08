@@ -83,10 +83,16 @@ AXIS GUIDE:
      in-world time passed (a day, a training arc, a time skip). Free-form
      date string (e.g. "2095-04-06 Morning"). Empty = no advance.
 
-  - ``power_strain``: ONLY when the protagonist used a costly ability.
-     power_used = canonical technique name; strain_increase = 1-100
-     (heavy magic costs more). Skip if no power was used or the cost was
-     trivial.
+  - ``power_strain``: ONLY when the protagonist's technique was
+     CHAPTER-DEFINING -- the kind of feat that would warrant an explicit
+     fatigue beat in a manga panel. Routine competent use of a power
+     does NOT generate an entry; skilled practitioners do their thing
+     without breaking a sweat. power_used = canonical technique name;
+     strain_increase = 1-10 (NOT 1-100; reserve >=7 for genuinely
+     punishing feats). Most chapters should have ZERO power_strain
+     entries. The storyteller, archivist_merge, and the storyteller's
+     next-chapter prompt all over-react to strain numbers; only emit
+     when the prose ACTUALLY depicted exhaustion or extreme cost.
 
   - ``pending_consequences``: For any chapter action that should produce
      a future consequence, schedule it. action = what the OC did;

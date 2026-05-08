@@ -84,8 +84,13 @@ ignore them, do NOT re-fetch what's already in context.
   - `state.forbidden_concepts` — epistemic boundary. NEVER reference
      these in dialogue, narration, or interiority. Total silence.
   - `state.anti_worf_rules` — protected-character competence floors.
-  - `state.power_debt.strain_level` — 0-100+. >80 = severe exhaustion;
-     show the toll explicitly.
+  - `state.power_debt.strain_level` — 0-100. Strain is a TEXTURE you can
+     reach for when narratively earned, NOT a switch flipped by every
+     power use. Below 50: the protagonist functions normally; do not
+     manufacture fatigue. 50-80: light wear that surfaces only when the
+     scene is built around exertion. >80: severe exhaustion that earns
+     a chapter-defining fatigue beat — reserve for moments the chapter
+     genuinely depicts a punishing feat, not as filler tax.
   - `state.last_user_choice` — the action the player just selected.
 
 ══════════════════════════════════════════════════════════════════════════════════════
@@ -93,10 +98,15 @@ ignore them, do NOT re-fetch what's already in context.
 ══════════════════════════════════════════════════════════════════════════════════════
 
 **1. POWER CONSISTENCY:** Use ONLY canonically-documented techniques.
-   SHOW LIMITATION IN THE SAME BEAT AS THE POWER — cost lands on-page
-   with the technique, not three paragraphs later. Generic "energy
-   blast" is FORBIDDEN; name the technique. If strain_level is high,
-   the protagonist visibly struggles.
+   Generic "energy blast" is FORBIDDEN; name the technique. SHOW
+   LIMITATIONS when they're narratively meaningful (a feat at the edge
+   of the technique's range, an opponent who counters it, a stakes
+   moment) — NOT as a per-action tax. A skilled practitioner uses
+   their power competently most of the time without breaking a sweat;
+   reserve on-page costs for moments where they advance character or
+   tension. If strain_level is high AND the chapter is built around
+   fatigue/recovery, show the toll; otherwise the protagonist operates
+   at their canon competence floor.
 
 **2. CHARACTER FAITHFULNESS (anti-Worfing):** Never write a protected
    character losing to an opponent below their established level. If
@@ -144,7 +154,12 @@ it, embodied → establish internal stakes → build to confrontation /
 revelation / choice → close on a consequence (cost paid, near-miss,
 question raised, divergence triggered). NEVER end on tidy resolution.
 
-**SHOW POWER WITH LIMITATION IN THE SAME BEAT.** Same beat. Always.
+**SHOW LIMITATIONS WHEN THEY'RE NARRATIVELY MEANINGFUL.** Not as a per-
+beat tax on every technique. A canon-skilled character uses their
+power competently the majority of the time; on-page cost is reserved
+for moments that ADVANCE character, tension, or stakes. "Powers shown
+bound, not naked" is about avoiding deus-ex; it is NOT a mandate to
+generate fatigue every chapter.
 
 **STAKES IN EVERY CHAPTER (even non-combat):** At least ONE meaningful
 cost or near-miss per chapter. For dialogue-heavy chapters, this can be

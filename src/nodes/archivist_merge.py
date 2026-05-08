@@ -268,19 +268,32 @@ async def archivist_merge(
         ctx.state["current_timeline_date"] = sanitize_context(delta["new_timeline_date"])
 
     # ─── 7. power_strain ────────────────────────────────────────────────
+    # Strain has two failure modes that combine to nerf the protagonist:
+    # (a) monotonic accumulation across chapters with no decay -- whatever
+    #     strain the model emits piles up forever;
+    # (b) the storyteller's prompt over-reacts to high strain by writing
+    #     visible exhaustion on every power use.
+    # Fix (a) here: residual fatigue HALVES between chapters (modelling
+    # whatever rest occurred), then this chapter's new strain layers on
+    # top, then we cap at 100. A chapter with zero new strain naturally
+    # decays toward 0 over a few chapters of recovery. Fix (b) lives in
+    # the storyteller prompt's POWER CONSISTENCY block.
     pd = dict(ctx.state.get("power_debt") or {})
     pd.setdefault("strain_level", 0)
     pd.setdefault("recent_feats", [])
+
+    new_strain = int(pd["strain_level"]) // 2  # half-life decay each chapter
     feats = list(pd["recent_feats"])
     for entry in (delta.get("power_strain") or []):
         increase = int(entry.get("strain_increase") or 0)
         if increase <= 0:
             continue
-        pd["strain_level"] = int(pd["strain_level"]) + increase
+        new_strain += increase
         power_used = sanitize_context(entry.get("power_used") or "")
         if power_used and power_used not in feats:
             feats.append(power_used)
-    pd["recent_feats"] = feats
+    pd["strain_level"] = max(0, min(100, new_strain))
+    pd["recent_feats"] = feats[-12:]
     ctx.state["power_debt"] = pd
 
     # ─── 8. pending_consequences ────────────────────────────────────────

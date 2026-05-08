@@ -82,10 +82,24 @@ class CanonEventStatusUpdate(BaseModel):
 
 
 class PowerStrainEntry(BaseModel):
-    """Strain incurred from a power demonstration. Mirrors track_power_strain tool."""
+    """Strain incurred from a chapter-defining power demonstration.
+
+    Reserve entries for genuine chapter-defining feats only. Routine
+    technique use should NOT generate a PowerStrainEntry -- a skilled
+    practitioner using their power competently is not a strain event.
+    The 1-10 scale matches the storyteller's expectation that strain is
+    a texture (used sparingly when fatigue is narratively in focus),
+    not a switch (flipped by every action).
+    """
 
     power_used: str
-    strain_increase: int = Field(description="Amount of strain added (1-100). Heavy magic costs more.")
+    strain_increase: int = Field(
+        description=(
+            "1-10. Reserve high values (>=7) for chapter-defining feats "
+            "that would warrant an explicit fatigue beat in a manga panel. "
+            "Routine competent use = 0 = skip the entry entirely."
+        ),
+    )
 
 
 class PendingConsequenceEntry(BaseModel):

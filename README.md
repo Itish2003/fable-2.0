@@ -5,6 +5,13 @@
 
 ---
 
+> **v2.1 (May 2026)**: V1 vision alignment — phased storyteller, living World
+> Bible substrate, typed choices + meta-questions, multi-turn setup wizard,
+> transactional rewrite, on-demand research, leakage guard. See
+> [`docs/vision.md`](docs/vision.md) for the design targets and
+> [`CHANGELOG.md`](CHANGELOG.md) for per-phase deliverables.
+
+
 Fable 2.0 is a complete architectural paradigm shift from traditional "prompt-chained" AI Dungeon Masters. Built entirely on the **Google ADK 2.0 Beta** framework, it abandons fragile `while` loops and monolithic prompts in favor of a strictly typed Directed Acyclic Graph (DAG), native map-reduce research swarms, and an event-sourced timeline.
 
 It acts as an uncompromising AI Game Master, utilizing a multi-agent tool-calling loop, a local GraphRAG memory system, and an interactive state machine to simulate living narrative worlds.

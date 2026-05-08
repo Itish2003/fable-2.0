@@ -1,5 +1,16 @@
+"""Lore Keeper: synthesizes the lore-hunter swarm output into the World Bible.
+
+Phase C expands the schema to populate the full v1-aligned substrate:
+canon timeline (with pressure scores + playbooks), per-character voice
+profiles, power-origin technique catalogs, anti-Worf integrity floors,
+and per-character knowledge-boundary limits. ``inject_lore_to_state``
+writes every populated field into ``ctx.state``; the storyteller's
+``before_model_callback`` reads them per turn for context injection.
+"""
+from __future__ import annotations
+
 import logging
-from typing import Any, AsyncGenerator, List, Dict
+from typing import Any, AsyncGenerator, List
 
 from pydantic import BaseModel, Field
 
@@ -14,39 +25,102 @@ logger = logging.getLogger("fable.lore_keeper")
 
 # ---------------------------------------------------------------------------
 # Output schemas
-# Dict[str, str] generates additionalProperties which Gemini rejects.
-# Use a typed list of objects instead and convert to dict when writing state.
+# Gemini structured-output rejects dict[str, T] (additionalProperties), so
+# everything-with-a-name lives as a list of objects with a `name` field.
+# inject_lore_to_state converts those into dicts when writing state.
 # ---------------------------------------------------------------------------
 
 class AntiWorfRule(BaseModel):
     character: str = Field(description="Character name, e.g. 'Tatsuya Shiba'")
-    rule: str = Field(description="Minimum competence guarantee, e.g. 'never loses a direct combat'")
+    rule: str = Field(description="Minimum competence guarantee")
+
+
+class CanonEventDraft(BaseModel):
+    """Canon-source event the OC must engage with. Tier guides storyteller pressure."""
+    event_id: str = Field(description="Stable id, e.g. 'lung_vs_undersiders'")
+    name: str
+    in_world_date: str = Field(default="")
+    pressure_score: int = Field(default=0, ge=0, le=100)
+    tier: str = Field(default="medium", description="mandatory / high / medium")
+    playbook: str = Field(default="", description="Rich narrative beats describing how the event typically unfolds")
+
+
+class CharacterVoiceDraft(BaseModel):
+    """Per-character speech profile for dialogue fidelity."""
+    character: str
+    speech_patterns: str = Field(default="")
+    vocabulary_level: str = Field(default="")
+    verbal_tics: List[str] = Field(default_factory=list)
+    topics_to_avoid: List[str] = Field(default_factory=list)
+    example_dialogue: str = Field(default="")
+
+
+class TechniqueDraft(BaseModel):
+    name: str
+    mechanics: str = Field(default="")
+    cost: str = Field(default="")
+    limitations: List[str] = Field(default_factory=list)
+
+
+class PowerSourceDraft(BaseModel):
+    name: str
+    universe: str = Field(default="")
+    canon_techniques: List[TechniqueDraft] = Field(default_factory=list)
+    signature_moves: List[str] = Field(default_factory=list)
+    combat_style: str = Field(default="")
+    oc_current_mastery: str = Field(default="")
+    weaknesses_and_counters: List[str] = Field(default_factory=list)
+
+
+class CharacterIntegrityDraft(BaseModel):
+    character: str
+    minimum_competence: str = Field(default="")
+    anti_worf_notes: str = Field(default="")
+
+
+class CharacterKnowledgeLimitsDraft(BaseModel):
+    character: str
+    knows: List[str] = Field(default_factory=list)
+    suspects: List[str] = Field(default_factory=list)
+    doesnt_know: List[str] = Field(default_factory=list)
 
 
 class LoreKeeperOutput(BaseModel):
     world_primer: str = Field(
-        description="Human-readable markdown synthesis of all crossover rules, "
-                    "power limitations, key factions, and canon constraints."
+        description="Markdown synthesis of the crossover (3-6 paragraphs)."
     )
-    forbidden_concepts: List[str] = Field(
+    forbidden_concepts: List[str] = Field(default_factory=list)
+    anti_worf_rules: List[AntiWorfRule] = Field(default_factory=list)
+    # Phase C substrate
+    canon_timeline_events: List[CanonEventDraft] = Field(
         default_factory=list,
-        description="Secrets and future spoilers the protagonist MUST NOT know yet."
+        description="Sorted upcoming canon events with pressure tiers + playbooks.",
     )
-    anti_worf_rules: List[AntiWorfRule] = Field(
+    character_voices: List[CharacterVoiceDraft] = Field(
         default_factory=list,
-        description="Per-character minimum competence guarantees."
+        description="One entry per significant canon character that may speak.",
+    )
+    power_sources: List[PowerSourceDraft] = Field(
+        default_factory=list,
+        description="Power-origin catalog driving the OC's abilities.",
+    )
+    canon_character_integrity: List[CharacterIntegrityDraft] = Field(
+        default_factory=list,
+        description="Anti-Worf integrity floors for protected canon characters.",
+    )
+    meta_knowledge_forbidden: List[str] = Field(
+        default_factory=list,
+        description="World-meta facts no in-fic character can reference.",
+    )
+    character_knowledge_limits: List[CharacterKnowledgeLimitsDraft] = Field(
+        default_factory=list,
+        description="Per-character knows/suspects/doesnt_know lists.",
     )
 
 
 class WorldBibleExtraction(BaseModel):
-    forbidden_concepts: List[str] = Field(
-        default_factory=list,
-        description="Secrets and spoilers the protagonist MUST NOT know."
-    )
-    anti_worf_rules: List[AntiWorfRule] = Field(
-        default_factory=list,
-        description="Baseline competence rules for major characters."
-    )
+    forbidden_concepts: List[str] = Field(default_factory=list)
+    anti_worf_rules: List[AntiWorfRule] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -60,26 +134,55 @@ def create_lore_keeper() -> LlmAgent:
         model="gemini-3.1-flash-lite-preview",
         instruction="""
 You are the Lore Keeper. You will receive an array of research summaries
-produced by the Lore Hunter Swarm.
+produced by the Lore Hunter Swarm. Synthesize them into a structured
+World Bible that the storyteller will use for years of canon-faithful
+chapters.
 
-Your job is to synthesize everything into a structured World Bible.
+Output a JSON object matching this schema EXACTLY (omit nothing, but
+empty arrays are fine when truly nothing applies):
 
-Output a JSON object with exactly these three fields:
+1. "world_primer" — A rich markdown document (3-6 paragraphs) covering
+   the crossover setting, power-system rules, key canon events,
+   factions, and how the protagonist's anomalous ability slots in.
 
-1. "world_primer" — A rich markdown document (3-6 paragraphs) covering:
-   - The crossover setting and power-system rules
-   - Key canon events, factions, and relationships
-   - How the protagonist's anomalous ability interacts with this world
+2. "forbidden_concepts" — Specific secrets and future spoilers the
+   protagonist MUST NOT reference yet. Be concrete.
 
-2. "forbidden_concepts" — A list of strings. Each is a secret, future spoiler,
-   or piece of knowledge the protagonist does NOT yet have. Be specific.
-   Example: ["Tatsuya is the legendary Mahesvara", "Miyuki's limiter exists"]
+3. "anti_worf_rules" — Quick competence guarantees:
+   [{"character": "Tatsuya Shiba", "rule": "never loses a direct combat exchange"}]
 
-3. "anti_worf_rules" — A list of objects, each with "character" and "rule" keys.
-   This prevents key characters from being humiliated in the narrative.
-   Example: [{"character": "Tatsuya Shiba", "rule": "never loses a direct combat exchange"}]
+4. "canon_timeline_events" — The 5-15 most important upcoming canon
+   events the storyteller will need to engage with. Each:
+     {event_id, name, in_world_date, pressure_score (0-100),
+      tier ("mandatory"|"high"|"medium"), playbook (rich beats)}
+   Sort by chronology. pressure_score reflects narrative urgency
+   relative to the story's start date.
 
-Return ONLY the JSON object. No markdown fences, no extra commentary.
+5. "character_voices" — Speech profiles for the 5-12 most likely-to-speak
+   canon characters. Each:
+     {character, speech_patterns, vocabulary_level,
+      verbal_tics: [...], topics_to_avoid: [...], example_dialogue}
+
+6. "power_sources" — One entry per origin-power the OC inherits or any
+   canon-world power system that interacts with the OC's abilities. Each:
+     {name, universe, canon_techniques: [{name, mechanics, cost,
+     limitations: [...]}], signature_moves: [...], combat_style,
+     oc_current_mastery, weaknesses_and_counters: [...]}
+   Be MECHANICALLY specific in cost and limitations — the storyteller
+   uses these to write "powers shown bound, not naked" beats.
+
+7. "canon_character_integrity" — Per protected canon character:
+     {character, minimum_competence (things they ALWAYS can do),
+      anti_worf_notes (why they must not be cheaply diminished)}
+
+8. "meta_knowledge_forbidden" — World-meta facts no in-fic character
+   can reference (e.g. "the Entities are extraterrestrial supercomputers"
+   in a Worm story).
+
+9. "character_knowledge_limits" — Per character:
+     {character, knows: [...], suspects: [...], doesnt_know: [...]}
+
+Return ONLY the JSON object. No markdown fences, no commentary.
 """,
         output_schema=LoreKeeperOutput,
         generate_content_config=types.GenerateContentConfig(
@@ -89,7 +192,7 @@ Return ONLY the JSON object. No markdown fences, no extra commentary.
 
 
 # ---------------------------------------------------------------------------
-# Fallback Extractor
+# Fallback Extractor (unchanged: covers only the minimal fields)
 # ---------------------------------------------------------------------------
 
 def create_fallback_extractor() -> LlmAgent:
@@ -141,7 +244,6 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
     elif isinstance(node_input, dict):
         _try_fallback_dict(node_input)
 
-    # Same setup-vs-enrichment guard as inject_lore_to_state.
     if ctx.state.get("last_story_text"):
         logger.info("Fallback: mid-story enrichment, auto-routing to success.")
         yield Event(actions=EventActions(route="success"))
@@ -155,14 +257,68 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
 # State Injection Node
 # ---------------------------------------------------------------------------
 
+def _write_substrate(ctx: Context, output: LoreKeeperOutput) -> None:
+    """Write every Phase C substrate field into ctx.state.
+
+    The drafts (lists with `character`/`name` fields) get converted to the
+    runtime shape (Dict[str, T] for char-keyed maps, lists for everything
+    else). Empty lists fall through and leave the state's default-empty
+    structures in place — enrichment turns can replace them later.
+    """
+    if output.canon_timeline_events:
+        ctx.state["canon_timeline"] = {
+            "events": [e.model_dump() for e in output.canon_timeline_events],
+        }
+
+    if output.character_voices:
+        ctx.state["character_voices"] = {
+            v.character: {
+                "speech_patterns": v.speech_patterns,
+                "vocabulary_level": v.vocabulary_level,
+                "verbal_tics": v.verbal_tics,
+                "topics_to_avoid": v.topics_to_avoid,
+                "example_dialogue": v.example_dialogue,
+            }
+            for v in output.character_voices
+        }
+
+    if output.power_sources:
+        ctx.state["power_origins"] = {
+            "sources": [s.model_dump() for s in output.power_sources],
+        }
+
+    if output.canon_character_integrity:
+        ctx.state["canon_character_integrity"] = {
+            i.character: {
+                "minimum_competence": i.minimum_competence,
+                "anti_worf_notes": i.anti_worf_notes,
+            }
+            for i in output.canon_character_integrity
+        }
+
+    kb_raw = {
+        "meta_knowledge_forbidden": list(output.meta_knowledge_forbidden or []),
+        "character_knowledge_limits": {
+            k.character: {
+                "knows": k.knows,
+                "suspects": k.suspects,
+                "doesnt_know": k.doesnt_know,
+            }
+            for k in (output.character_knowledge_limits or [])
+        },
+    }
+    if kb_raw["meta_knowledge_forbidden"] or kb_raw["character_knowledge_limits"]:
+        ctx.state["knowledge_boundaries"] = kb_raw
+
+
 @node(name="lore_keeper_injector", rerun_on_resume=True)
 async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[Any, None]:
     """
-    Extracts LoreKeeperOutput from node_input, stores forbidden_concepts and
-    anti_worf_rules into state, then suspends for user primer review.
+    Extract LoreKeeperOutput from node_input, populate the World Bible
+    substrate, then either suspend for user primer review (initial setup)
+    or auto-route to success (mid-story enrichment loops, defense-in-depth
+    even after enrich_node was deleted).
     """
-    # Check resume FIRST. On resume, node_input is the adk_request_input response
-    # (Content), not the lore_keeper output. Extraction already ran before suspend.
     interrupt_id = "setup_world_primer"
     if ctx.resume_inputs.get(interrupt_id):
         logger.info("User approved World Primer. Transitioning to Intent Router.")
@@ -177,7 +333,18 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         ctx.state["forbidden_concepts"] = output.forbidden_concepts
         ctx.state["anti_worf_rules"] = {r.character: r.rule for r in output.anti_worf_rules}
         ctx.state["temp:crossover_primer"] = primer_text
-        logger.info("Lore Keeper structured output injected into state.")
+        _write_substrate(ctx, output)
+        logger.info(
+            "Lore Keeper output injected: primer=%d chars, %d forbidden, %d anti-worf, "
+            "%d timeline events, %d voices, %d power sources, %d integrity rules.",
+            len(primer_text or ""),
+            len(output.forbidden_concepts),
+            len(output.anti_worf_rules),
+            len(output.canon_timeline_events),
+            len(output.character_voices),
+            len(output.power_sources),
+            len(output.canon_character_integrity),
+        )
 
     def _try_from_dict(d: dict) -> bool:
         """Try to build LoreKeeperOutput from a plain dict (ADK workflow wraps output_schema as dict)."""
@@ -193,20 +360,13 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
             logger.debug("Dict→LoreKeeperOutput failed: %s", e)
             return False
 
-    # ── Path 1a: Pydantic model on .output ────────────────────────────────
     out = getattr(node_input, "output", None)
     if isinstance(out, LoreKeeperOutput):
         _apply_structured(out)
-
-    # ── Path 1b: ADK workflow passes output_schema result as plain dict ───
     elif isinstance(out, dict) and "world_primer" in out:
         _try_from_dict(out)
-
-    # ── Path 1c: node_input itself is the dict ────────────────────────────
     elif isinstance(node_input, dict) and "world_primer" in node_input:
         _try_from_dict(node_input)
-
-    # ── Path 2: raw text content ──────────────────────────────────────────
     elif getattr(node_input, "content", None):
         for part in (node_input.content.parts or []):
             text = getattr(part, "text", None)
@@ -216,7 +376,6 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
                 logger.info("Lore Keeper raw text content injected into state.")
                 break
 
-    # ── Path 3: nothing useful — route to fallback extractor ──────────────
     if not primer_text:
         logger.warning(
             "Lore Keeper produced no extractable output (node_input type=%s). "
@@ -226,10 +385,6 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         yield Event(actions=EventActions(route="fallback"))
         return
 
-    # ── HITL: suspend ONLY on initial setup, not on mid-story enrichment ─
-    # If a chapter has already been told, this is the enrich path looping
-    # back through the research swarm. Auto-approve silently so the player
-    # isn't forced to re-review the world primer mid-game.
     if ctx.state.get("last_story_text"):
         logger.info("Mid-story enrichment complete. Auto-routing to success (no HITL).")
         yield Event(actions=EventActions(route="success"))

@@ -1,6 +1,19 @@
 from __future__ import annotations
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, model_validator, ConfigDict
+
+# Phase C: living World Bible substrate (canon timeline pressure, character
+# voice fidelity, power-system enforcement, stakes ledger, knowledge
+# boundaries, anti-Worf floors, multi-identity tracking).
+from src.state.bible_models import (
+    CanonTimeline,
+    CharacterVoice,
+    PowerOrigins,
+    StakesAndConsequences,
+    KnowledgeBoundaries,
+    CharacterIntegrity,
+    Identity,
+)
 from enum import Enum
 
 # ─── Enums ────────────────────────────────────────────────────────────────────
@@ -119,6 +132,36 @@ class FableAgentState(BaseModel):
             "parse_chapter_tail succeeds; consumed by Phase B for choice "
             "rendering. None when the last chapter had no parseable JSON tail."
         ),
+    )
+
+    # ─── Phase C: living World Bible substrate ───────────────────────
+    canon_timeline: CanonTimeline = Field(
+        default_factory=CanonTimeline,
+        description="Canon-source events with pressure scores, playbooks, and status retirement. Drives [!!!]/[!!]/[!] enforcement in the storyteller's per-turn context injection.",
+    )
+    character_voices: Dict[str, CharacterVoice] = Field(
+        default_factory=dict,
+        description="Per-character speech profile (patterns / vocabulary / tics / topics_to_avoid / example_dialogue). Lookup keyed by character name.",
+    )
+    power_origins: PowerOrigins = Field(
+        default_factory=PowerOrigins,
+        description="Power-source catalog with canon techniques + limitations + OC mastery + weaknesses, used to enforce 'powers shown bound, not naked' beats.",
+    )
+    stakes_and_consequences: StakesAndConsequences = Field(
+        default_factory=StakesAndConsequences,
+        description="Costs paid, near-misses, power-usage debt, and pending consequences with due-by-chapter scheduling. Prevents 'effortless wins'.",
+    )
+    knowledge_boundaries: KnowledgeBoundaries = Field(
+        default_factory=KnowledgeBoundaries,
+        description="Epistemic constraints. meta_knowledge_forbidden complements forbidden_concepts; character_knowledge_limits restricts per-character what each persona may reference.",
+    )
+    canon_character_integrity: Dict[str, CharacterIntegrity] = Field(
+        default_factory=dict,
+        description="Per-protected-character minimum_competence + anti_worf_notes. Layered on top of the simpler anti_worf_rules dict.",
+    )
+    identities: Dict[str, Identity] = Field(
+        default_factory=dict,
+        description="Multi-persona graph (civilian / hero / vigilante / etc.) with known_by / suspected_by / linked_to edges.",
     )
 
     # Auditor violation history (written by the report_violation tool)

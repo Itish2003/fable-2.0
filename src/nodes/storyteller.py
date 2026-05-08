@@ -340,49 +340,316 @@ Before finalizing:
 """.replace("__MIN_WORDS__", str(_CHAPTER_MIN_WORDS)).replace("__MAX_WORDS__", str(_CHAPTER_MAX_WORDS))
 
 
+def _tier_marker(tier) -> str:
+    """Map canon-event tier to a visual urgency marker.
+
+    Robust to str / Enum / unset: ADK serialises state through JSON which
+    flattens str-based Enums to their value, but in-process callers
+    (smoke tests, future direct invocations) may pass the Enum itself.
+    """
+    val = getattr(tier, "value", tier) if tier is not None else "medium"
+    return {
+        "mandatory": "[!!!]",
+        "high": "[!!]",
+        "medium": "[!]",
+    }.get(str(val), "[!]")
+
+
+def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
+    """Build TIMELINE ENFORCEMENT block from state.canon_timeline.events.
+
+    Lists upcoming events sorted by pressure_score (highest first) and
+    tags each with [!!!] / [!!] / [!] per its tier. Retired events
+    (occurred / modified / prevented) are excluded.
+    """
+    timeline = state.get("canon_timeline") or {}
+    events = timeline.get("events") if isinstance(timeline, dict) else None
+    if not events:
+        return None
+
+    upcoming = [e for e in events if isinstance(e, dict) and e.get("status", "upcoming") == "upcoming"]
+    if not upcoming:
+        return None
+    upcoming.sort(key=lambda e: int(e.get("pressure_score", 0)), reverse=True)
+
+    lines = []
+    for ev in upcoming[:12]:
+        marker = _tier_marker(str(ev.get("tier", "medium")))
+        name = ev.get("name", "(unnamed event)")
+        date = ev.get("in_world_date", "")
+        date_part = f" — {date}" if date else ""
+        lines.append(f"{marker} **{name}**{date_part}")
+        playbook = ev.get("playbook") or ""
+        if playbook:
+            lines.append(f"  · {playbook}")
+
+    return (
+        "TIMELINE ENFORCEMENT — upcoming canon events the chapter must engage with:\n\n"
+        + "\n".join(lines)
+        + "\n\nRules: [!!!] MANDATORY events MUST appear in this chapter. "
+          "[!!] HIGH events should be foreshadowed or prepared. "
+          "[!] MEDIUM events may be woven in when narratively appropriate. "
+          "After playing out an event, the archivist will retire it via advance_event_status."
+    )
+
+
+def _build_character_voices_block(state, active_names: list[str]) -> Optional[str]:
+    """Inject per-character speech profiles for active characters."""
+    voices = state.get("character_voices") or {}
+    if not voices:
+        return None
+
+    blocks = []
+    for name in active_names:
+        v = voices.get(name)
+        if not v:
+            continue
+        bullet = []
+        if v.get("speech_patterns"): bullet.append(f"  - speech: {v['speech_patterns']}")
+        if v.get("vocabulary_level"): bullet.append(f"  - vocabulary: {v['vocabulary_level']}")
+        tics = v.get("verbal_tics") or []
+        if tics: bullet.append(f"  - verbal tics: {', '.join(tics)}")
+        avoid = v.get("topics_to_avoid") or []
+        if avoid: bullet.append(f"  - topics to avoid: {', '.join(avoid)}")
+        if v.get("example_dialogue"): bullet.append(f"  - example: \"{v['example_dialogue']}\"")
+        if bullet:
+            blocks.append(f"**{name}**\n" + "\n".join(bullet))
+
+    if not blocks:
+        return None
+    return "CHARACTER VOICES — match these patterns when these characters speak:\n\n" + "\n\n".join(blocks)
+
+
+def _build_power_system_block(state) -> Optional[str]:
+    """Inject the OC's power-source catalog with techniques + limitations."""
+    origins = state.get("power_origins") or {}
+    sources = origins.get("sources") if isinstance(origins, dict) else None
+    if not sources:
+        return None
+
+    blocks = []
+    for s in sources[:4]:
+        if not isinstance(s, dict):
+            continue
+        lines = [f"### {s.get('name', '(unnamed source)')} — {s.get('universe', '')}"]
+        if s.get("combat_style"):
+            lines.append(f"Combat style: {s['combat_style']}")
+        if s.get("oc_current_mastery"):
+            lines.append(f"OC mastery: {s['oc_current_mastery']}")
+        weaknesses = s.get("weaknesses_and_counters") or []
+        if weaknesses:
+            lines.append(f"Weaknesses: {'; '.join(weaknesses[:6])}")
+        techs = s.get("canon_techniques") or []
+        if techs:
+            lines.append("Canonical techniques (every cost / limitation MUST be shown when used):")
+            for t in techs[:8]:
+                if not isinstance(t, dict):
+                    continue
+                name = t.get("name", "")
+                cost = t.get("cost", "")
+                limits = t.get("limitations") or []
+                lim_str = f" | limits: {'; '.join(limits)}" if limits else ""
+                cost_str = f" | cost: {cost}" if cost else ""
+                lines.append(f"  - **{name}**{cost_str}{lim_str}")
+        signatures = s.get("signature_moves") or []
+        if signatures:
+            lines.append(f"Signature moves: {', '.join(signatures[:6])}")
+        blocks.append("\n".join(lines))
+
+    if not blocks:
+        return None
+    return (
+        "POWER SYSTEM ENFORCEMENT — when depicting these abilities, the cost AND a "
+        "named limitation MUST appear in the same beat as the technique itself:\n\n"
+        + "\n\n".join(blocks)
+    )
+
+
+def _build_protected_characters_block(state, active_names: list[str]) -> Optional[str]:
+    """Anti-Worf integrity floors for any active character that has one."""
+    integrity = state.get("canon_character_integrity") or {}
+    if not integrity:
+        return None
+    blocks = []
+    for name in active_names:
+        rec = integrity.get(name)
+        if not rec or not isinstance(rec, dict):
+            continue
+        lines = [f"**{name}**"]
+        if rec.get("minimum_competence"):
+            lines.append(f"  - ALWAYS can: {rec['minimum_competence']}")
+        if rec.get("anti_worf_notes"):
+            lines.append(f"  - notes: {rec['anti_worf_notes']}")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return None
+    return (
+        "PROTECTED CHARACTERS — competence floors. NEVER write these characters losing "
+        "to opponents below their level; if the OC defeats them, the victory must be "
+        "earned via concrete setup, weakness exploitation, or significant cost.\n\n"
+        + "\n\n".join(blocks)
+    )
+
+
+def _build_stakes_block(state, current_chapter: int) -> Optional[str]:
+    """Pending consequences scheduler: surface anything due-by current chapter."""
+    stakes = state.get("stakes_and_consequences") or {}
+    pending = stakes.get("pending_consequences") if isinstance(stakes, dict) else None
+    if not pending:
+        return None
+
+    overdue, due_now, due_soon = [], [], []
+    for c in pending:
+        if not isinstance(c, dict):
+            continue
+        due = int(c.get("due_by_chapter", 0) or 0)
+        action = c.get("action", "")
+        result = c.get("predicted_consequence", "")
+        line = f"- {action} → expected: {result} (due_by_chapter={due})"
+        if due and due < current_chapter:
+            overdue.append(line + " [OVERDUE]")
+        elif due == current_chapter:
+            due_now.append(line + " [DUE NOW]")
+        elif due == current_chapter + 1:
+            due_soon.append(line + " [DUE NEXT]")
+
+    if not (overdue or due_now or due_soon):
+        return None
+
+    parts = []
+    if overdue:
+        parts.append("[!!!] OVERDUE — must be addressed in this chapter:\n" + "\n".join(overdue))
+    if due_now:
+        parts.append("[!!] DUE NOW — should resolve this chapter:\n" + "\n".join(due_now))
+    if due_soon:
+        parts.append("[!] APPROACHING — foreshadow / prepare:\n" + "\n".join(due_soon))
+    return "STAKES LEDGER — pending consequences from earlier choices:\n\n" + "\n\n".join(parts)
+
+
+def _build_knowledge_boundaries_block(state, active_names: list[str]) -> Optional[str]:
+    """Per-character epistemic limits for active characters."""
+    kb = state.get("knowledge_boundaries") or {}
+    if not isinstance(kb, dict):
+        return None
+
+    sections = []
+    meta = kb.get("meta_knowledge_forbidden") or []
+    if meta:
+        sections.append("World-meta facts NO in-fic character may reference:\n  - " + "\n  - ".join(meta))
+
+    char_limits = kb.get("character_knowledge_limits") or {}
+    char_blocks = []
+    for name in active_names:
+        rec = char_limits.get(name)
+        if not rec or not isinstance(rec, dict):
+            continue
+        lines = [f"**{name}**"]
+        knows = rec.get("knows") or []
+        suspects = rec.get("suspects") or []
+        unknowns = rec.get("doesnt_know") or []
+        if knows:    lines.append(f"  - knows: {'; '.join(knows[:6])}")
+        if suspects: lines.append(f"  - suspects: {'; '.join(suspects[:6])}")
+        if unknowns: lines.append(f"  - DOES NOT know: {'; '.join(unknowns[:6])}")
+        if len(lines) > 1:
+            char_blocks.append("\n".join(lines))
+    if char_blocks:
+        sections.append("Per-character knowledge limits — never write a character referencing what they don't know:\n\n" + "\n\n".join(char_blocks))
+
+    if not sections:
+        return None
+    return "KNOWLEDGE BOUNDARIES:\n\n" + "\n\n".join(sections)
+
+
+def _tick_pending_consequences(state, current_chapter: int) -> None:
+    """Mark any consequence whose due_by_chapter has passed as overdue.
+
+    Idempotent. Runs at the start of each storyteller turn so the
+    enforcement block can flag overdue threads as [OVERDUE].
+    """
+    stakes_raw = state.get("stakes_and_consequences")
+    if not isinstance(stakes_raw, dict):
+        return
+    pending = stakes_raw.get("pending_consequences")
+    if not isinstance(pending, list) or not pending:
+        return
+    mutated = False
+    for c in pending:
+        if not isinstance(c, dict):
+            continue
+        due = int(c.get("due_by_chapter", 0) or 0)
+        if due and due < current_chapter and not c.get("overdue"):
+            c["overdue"] = True
+            mutated = True
+    if mutated:
+        # Reassign so ADK records the state delta.
+        stakes_raw["pending_consequences"] = pending
+        state["stakes_and_consequences"] = stakes_raw
+
+
 async def _inject_active_character_lore(
     callback_context: CallbackContext,
     llm_request: LlmRequest,
 ) -> Optional[LlmResponse]:
     """``before_model_callback`` for the Storyteller.
 
-    Pre-fetches lore for every name in ``state["active_characters"]`` and
-    appends a "Known facts about active characters" block to the system
-    instruction via ``llm_request.append_instructions`` -- the canonical
-    mutation API on :class:`LlmRequest` (see
-    ``google.adk.models.llm_request.LlmRequest.append_instructions``).
+    Builds the Phase C enforcement blocks (timeline pressure, character
+    voices, power-system, protected characters, stakes ledger, knowledge
+    boundaries) plus the GraphRAG-fetched "Known facts" block, and
+    appends them all to the LLM request via ``append_instructions``.
 
-    Reuses :func:`src.tools.lore_lookup_tool.retrieve_lore` so the on-demand
-    tool and the pre-injection share one retrieval code path.
-
-    No-op when ``active_characters`` is empty or no matches come back.
-    Returning ``None`` lets the LLM call proceed normally (ADK contract).
+    Each block is independent and falls through silently when its source
+    state is empty -- so a fresh story with thin state still works. The
+    pending-consequence overdue-tick runs once per turn here.
     """
     state = callback_context.state
     active_characters = state.get("active_characters") or {}
-    if not active_characters:
-        return None
+    active_names = list(active_characters.keys())
+
+    chapter_count = int(state.get("chapter_count", 1) or 1)
+    # The chapter we are about to write is the (chapter_count)th completed
+    # chapter when chapter_count is incremented post-archivist; conservative
+    # interpretation: treat chapter_count as the chapter being authored now.
+    current_chapter = chapter_count
+    _tick_pending_consequences(state, current_chapter)
 
     blocks: list[str] = []
-    for name in active_characters.keys():
-        matches = await retrieve_lore(name)
-        if not matches:
-            continue
-        bullets: list[str] = []
-        for m in matches:
-            attrs = m.get("attributes") or {}
-            attrs_str = f" attributes={attrs}" if attrs else ""
-            bullets.append(f"- {m.get('chunk_text', '').strip()}{attrs_str}")
-        blocks.append(f"## {name}\n" + "\n".join(bullets))
+
+    # 1. Known facts about active characters (existing behavior)
+    if active_characters:
+        char_blocks: list[str] = []
+        for name in active_names:
+            matches = await retrieve_lore(name)
+            if not matches:
+                continue
+            bullets: list[str] = []
+            for m in matches:
+                attrs = m.get("attributes") or {}
+                attrs_str = f" attributes={attrs}" if attrs else ""
+                bullets.append(f"- {m.get('chunk_text', '').strip()}{attrs_str}")
+            char_blocks.append(f"## {name}\n" + "\n".join(bullets))
+        if char_blocks:
+            blocks.append("Known facts about active characters:\n\n" + "\n\n".join(char_blocks))
+
+    # 2-7. Phase C substrate blocks
+    for fn, args in (
+        (_build_timeline_block, (state, current_chapter)),
+        (_build_character_voices_block, (state, active_names)),
+        (_build_power_system_block, (state,)),
+        (_build_protected_characters_block, (state, active_names)),
+        (_build_stakes_block, (state, current_chapter)),
+        (_build_knowledge_boundaries_block, (state, active_names)),
+    ):
+        block = fn(*args)
+        if block:
+            blocks.append(block)
 
     if not blocks:
         return None
 
-    payload = "Known facts about active characters:\n\n" + "\n\n".join(blocks)
-    llm_request.append_instructions([payload])
+    llm_request.append_instructions(blocks)
     logger.info(
-        "Storyteller before_model: injected lore for %d character(s)",
-        len(blocks),
+        "Storyteller before_model: injected %d enforcement block(s) (active chars=%d, chapter=%d)",
+        len(blocks), len(active_names), current_chapter,
     )
     return None
 

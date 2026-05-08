@@ -315,6 +315,210 @@ async def report_violation(
     return {"logged": True, "violation_type": violation_type, "count": len(log)}
 
 
+
+
+# ─── Phase C: living-Bible substrate tools ──────────────────────────────────
+
+async def update_character_voice(
+    character_name: str,
+    speech_patterns: str,
+    vocabulary_level: str,
+    verbal_tics: list[str],
+    topics_to_avoid: list[str],
+    example_dialogue: str,
+    tool_context: ToolContext,
+) -> dict:
+    """
+    Persist a per-character speech profile so the Storyteller can write
+    canon-faithful dialogue. Call ONCE per character per chapter when a
+    character speaks, only if their existing profile is missing or stale.
+
+    Args:
+        character_name: Exact canonical character name.
+        speech_patterns: Formal / casual / technical / military / archaic / etc.
+        vocabulary_level: Simple / educated / specialized / archaic / modern.
+        verbal_tics: Repeated phrases, filler words, mannerisms.
+        topics_to_avoid: What this character deflects or refuses to discuss.
+        example_dialogue: A characteristic line from this chapter.
+    """
+    name = sanitize_context(character_name)
+    voices = dict(tool_context.state.get("character_voices") or {})
+    voices[name] = {
+        "speech_patterns": sanitize_context(speech_patterns),
+        "vocabulary_level": sanitize_context(vocabulary_level),
+        "verbal_tics": [sanitize_context(t) for t in verbal_tics],
+        "topics_to_avoid": [sanitize_context(t) for t in topics_to_avoid],
+        "example_dialogue": sanitize_context(example_dialogue),
+    }
+    tool_context.state["character_voices"] = voices
+    return {"updated": True, "character": name}
+
+
+async def add_pending_consequence(
+    action: str,
+    predicted_consequence: str,
+    due_by_chapter: int,
+    tool_context: ToolContext,
+) -> dict:
+    """
+    Schedule a future consequence the Storyteller MUST address by a specific
+    chapter. Used to enforce the "no effortless wins" stakes loop.
+
+    Args:
+        action: What the OC did that triggered this.
+        predicted_consequence: What should happen as a result.
+        due_by_chapter: Chapter by which this must resolve.
+    """
+    stakes = dict(tool_context.state.get("stakes_and_consequences") or {})
+    pending = list(stakes.get("pending_consequences") or [])
+    pending.append({
+        "action": sanitize_context(action),
+        "predicted_consequence": sanitize_context(predicted_consequence),
+        "due_by_chapter": int(due_by_chapter),
+        "overdue": False,
+    })
+    stakes["pending_consequences"] = pending
+    # Preserve other stakes fields
+    stakes.setdefault("costs_paid", [])
+    stakes.setdefault("near_misses", [])
+    stakes.setdefault("power_usage_debt", {})
+    tool_context.state["stakes_and_consequences"] = stakes
+    return {"added": True, "due_by_chapter": int(due_by_chapter)}
+
+
+async def materialize_butterfly_effect(
+    divergence_event_id: str,
+    materialization_description: str,
+    tool_context: ToolContext,
+) -> dict:
+    """
+    Mark a previously predicted ripple from a divergence as having actually
+    come true this chapter. Tracks the v1 "aim to materialize at least one
+    effect every 3-4 chapters" cadence.
+
+    Args:
+        divergence_event_id: The event_id of an existing active_divergences entry.
+        materialization_description: How the ripple manifested in this chapter.
+    """
+    target_id = sanitize_context(divergence_event_id)
+    desc = sanitize_context(materialization_description)
+    divs = list(tool_context.state.get("active_divergences") or [])
+    matched = False
+    for d in divs:
+        if isinstance(d, dict) and d.get("event_id") == target_id:
+            materialized = list(d.get("materialized_ripples") or [])
+            materialized.append(desc)
+            d["materialized_ripples"] = materialized
+            matched = True
+            break
+    if not matched:
+        # Best-effort: append a synthetic entry rather than failing.
+        divs.append({
+            "event_id": target_id,
+            "description": "(referenced by materialize_butterfly_effect)",
+            "ripple_effects": [],
+            "materialized_ripples": [desc],
+        })
+    tool_context.state["active_divergences"] = divs
+    return {"materialized": True, "event_id": target_id, "matched_existing": matched}
+
+
+async def advance_event_status(
+    event_name: str,
+    new_status: str,
+    notes: str,
+    tool_context: ToolContext,
+) -> dict:
+    """
+    Retire an upcoming canon timeline event by transitioning its status.
+    Once retired, the storyteller's enforcement block stops re-injecting it.
+
+    Args:
+        event_name: The name (or event_id) of an entry in canon_timeline.events.
+        new_status: One of "occurred", "modified", or "prevented".
+        notes: One-line description of how it played out.
+    """
+    target = sanitize_context(event_name)
+    notes_clean = sanitize_context(notes)
+    valid_statuses = {"upcoming", "occurred", "modified", "prevented"}
+    status = new_status.strip().lower()
+    if status not in valid_statuses:
+        status = "occurred"
+
+    timeline = dict(tool_context.state.get("canon_timeline") or {})
+    events = list(timeline.get("events") or [])
+    matched = False
+    for ev in events:
+        if isinstance(ev, dict) and (ev.get("name") == target or ev.get("event_id") == target):
+            ev["status"] = status
+            if notes_clean:
+                ev["notes"] = notes_clean
+            matched = True
+            break
+    timeline["events"] = events
+    tool_context.state["canon_timeline"] = timeline
+    return {"retired": matched, "event": target, "new_status": status}
+
+
+async def mark_knowledge_violation(
+    character_name: str,
+    concept_referenced: str,
+    violation_type: str,
+    quote: str,
+    tool_context: ToolContext,
+) -> dict:
+    """
+    Record a chapter event where a character referenced something they
+    shouldn't know per knowledge_boundaries. Surfaces as a soft warning;
+    does not retroactively edit the chapter.
+
+    Args:
+        character_name: Who said/thought something they shouldn't.
+        concept_referenced: The forbidden concept they touched.
+        violation_type: Short tag, e.g. "epistemic_leak" / "meta_break" / "future_spoiler".
+        quote: A direct quote from the chapter that triggered the flag.
+    """
+    log = list(tool_context.state.get("violation_log") or [])
+    log.append({
+        "type": "knowledge_" + sanitize_context(violation_type),
+        "character": sanitize_context(character_name),
+        "concept": sanitize_context(concept_referenced),
+        "quote": sanitize_context(quote),
+    })
+    tool_context.state["violation_log"] = log
+    return {"logged": True, "count": len(log)}
+
+
+async def mark_power_scaling_violation(
+    character_name: str,
+    what_happened: str,
+    minimum_competence_violated: str,
+    severity: str,
+    tool_context: ToolContext,
+) -> dict:
+    """
+    Record an anti-Worf breach: a protected character was written below
+    their documented competence floor. Logged for downstream review and
+    optionally for triggering a rewrite.
+
+    Args:
+        character_name: Protected character with an entry in canon_character_integrity.
+        what_happened: Concrete description of the breach this chapter.
+        minimum_competence_violated: The specific floor that was crossed.
+        severity: "minor" / "moderate" / "major" / "critical".
+    """
+    log = list(tool_context.state.get("violation_log") or [])
+    log.append({
+        "type": "power_scaling",
+        "character": sanitize_context(character_name),
+        "what_happened": sanitize_context(what_happened),
+        "minimum_competence_violated": sanitize_context(minimum_competence_violated),
+        "severity": sanitize_context(severity),
+    })
+    tool_context.state["violation_log"] = log
+    return {"logged": True, "severity": severity}
+
+
 # The ADK 2.0 list of tools to provide to the ArchivistNode
 ARCHIVIST_TOOLS = [
     update_relationship,
@@ -323,4 +527,11 @@ ARCHIVIST_TOOLS = [
     advance_timeline,
     commit_lore,
     report_violation,
+    # Phase C substrate maintenance
+    update_character_voice,
+    add_pending_consequence,
+    materialize_butterfly_effect,
+    advance_event_status,
+    mark_knowledge_violation,
+    mark_power_scaling_violation,
 ]

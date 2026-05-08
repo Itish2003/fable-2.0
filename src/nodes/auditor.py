@@ -7,6 +7,7 @@ from google.adk.events import Event, EventActions
 
 from src.state.models import FableAgentState
 from src.state.chapter_output import parse_chapter_tail
+from src.utils.leakage_terms import detect_leakage
 
 logger = logging.getLogger("fable.auditor")
 
@@ -15,6 +16,24 @@ logger = logging.getLogger("fable.auditor")
 # add a field to FableAgentState for what is purely a per-loop retry count.
 _AUDIT_RETRY_KEY = "temp:audit_retries"
 _MAX_AUDIT_RETRIES = 3
+
+
+def _heuristic_universes(premise: str) -> list[str]:
+    """Extract likely-universe slugs from the OC framework as a fallback.
+
+    Used by the auditor's leakage scan when ctx.state['universes'] hasn't
+    been populated yet (e.g. early chapters before lore_keeper recorded an
+    explicit list). Conservative: only matches a small, well-known alias set.
+    """
+    from src.utils.leakage_terms import _UNIVERSE_ALIASES
+    found: list[str] = []
+    p = (premise or "").lower()
+    for alias in _UNIVERSE_ALIASES:
+        if alias in p:
+            # Map alias -> a canonical title-shaped string detect_leakage
+            # can normalise back to a slug.
+            found.append(alias)
+    return found
 
 
 @node(name="auditor")
@@ -122,6 +141,29 @@ async def run_auditor(
     # decoupled from the research_tools module if it's not loaded yet.
     from src.tools.research_tools import reset_research_counter
     reset_research_counter(ctx.state)
+
+    # Phase G: source-universe leakage scan. Soft warning -- never blocks
+    # the chapter (rewrites are user-initiated). Hits go into violation_log
+    # so the archivist + downstream UI can surface them. story_universes
+    # may be empty on early chapters; leakage scan is a no-op then.
+    story_universes = ctx.state.get("universes") or []
+    if not story_universes:
+        # Best-effort fallback: pull universes hint from story_premise
+        # so leakage detection still works before the lore_keeper writes
+        # an explicit universes list.
+        premise = (ctx.state.get("story_premise") or "")[:2000]
+        story_universes = _heuristic_universes(premise)
+    leaks = detect_leakage(story_text, story_universes)
+    if leaks:
+        log = list(ctx.state.get("violation_log") or [])
+        for leak in leaks:
+            log.append(leak.to_dict())
+        ctx.state["violation_log"] = log
+        logger.warning(
+            "LEAKAGE: %d source-universe term(s) detected: %s",
+            len(leaks),
+            ", ".join(f"{l.universe_origin}:{l.term}" for l in leaks[:6]),
+        )
 
     # Explicitly yield the 'passed' route so the Workflow Graph can follow the edge
     yield Event(actions=EventActions(route="passed"))

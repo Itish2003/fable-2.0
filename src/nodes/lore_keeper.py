@@ -133,7 +133,9 @@ def create_lore_keeper() -> LlmAgent:
         description="Fuses structured swarm findings into a World Bible for the Fable Engine.",
         model="gemini-3.1-flash-lite",
         output_schema=LoreKeeperOutput,
-        output_key="lore_keeper_output",
+        # `temp:` prefix bypasses FableAgentState schema validation; the
+        # injector consumes this once and writes to canonical fields.
+        output_key="temp:lore_keeper_output",
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json"
         ),
@@ -235,7 +237,7 @@ def create_fallback_extractor() -> LlmAgent:
         description="Explicitly extracts World Bible data from raw text when the primary agent fails.",
         model="gemini-3.1-flash-lite",
         output_schema=WorldBibleExtraction,
-        output_key="world_bible_extraction",
+        output_key="temp:world_bible_extraction",
         generate_content_config=types.GenerateContentConfig(response_mime_type="application/json"),
         instruction="""Extract the forbidden concepts and anti-worf rules from the provided text.
 Output a JSON object with:
@@ -263,7 +265,7 @@ async def fallback_injector(ctx: Context, node_input: Any) -> AsyncGenerator[Any
         yield Event(actions=EventActions(route="success"))
         return
 
-    raw = ctx.state.get("world_bible_extraction") or {}
+    raw = ctx.state.get("temp:world_bible_extraction") or {}
     if raw:
         try:
             rules = raw.get("anti_worf_rules") or []
@@ -387,10 +389,10 @@ async def inject_lore_to_state(ctx: Context, node_input: Any) -> AsyncGenerator[
         yield Event(actions=EventActions(route="success"))
         return
 
-    raw = ctx.state.get("lore_keeper_output") or {}
+    raw = ctx.state.get("temp:lore_keeper_output") or {}
     if not raw or "world_primer" not in raw:
         logger.warning(
-            "Lore Keeper produced no extractable output (state.lore_keeper_output=%r). "
+            "Lore Keeper produced no extractable output (state.temp:lore_keeper_output=%r). "
             "Routing to fallback extractor.", type(raw).__name__,
         )
         yield Event(actions=EventActions(route="fallback"))

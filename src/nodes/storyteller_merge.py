@@ -29,7 +29,7 @@ logger = logging.getLogger("fable.storyteller_merge")
 async def storyteller_merge(
     ctx: Context, node_input: Any
 ) -> AsyncGenerator[Event, None]:
-    out = ctx.state.get("storyteller_output") or {}
+    out = ctx.state.get("temp:storyteller_output") or {}
     prose = (out.get("prose") or "").strip()
     chapter_meta = out.get("chapter_meta") or {}
 

@@ -150,5 +150,7 @@ def create_archivist_node() -> LlmAgent:
         instruction=_ARCHIVIST_INSTRUCTION,
         before_model_callback=_inject_chapter_prose,
         output_schema=ArchivistDelta,
-        output_key="archivist_delta",
+        # `temp:` prefix bypasses FableAgentState schema validation; the
+        # archivist_merge consumes this once and writes to canonical fields.
+        output_key="temp:archivist_delta",
     )

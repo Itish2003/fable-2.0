@@ -622,7 +622,10 @@ def create_storyteller_node() -> LlmAgent:
         tools=[lore_lookup, trigger_research],
         before_model_callback=_inject_active_character_lore,
         output_schema=StorytellerOutput,
-        output_key="storyteller_output",
+        # `temp:` prefix bypasses FableAgentState schema validation; the
+        # storyteller_merge consumes this once and writes to canonical
+        # fields (last_story_text, last_chapter_meta).
+        output_key="temp:storyteller_output",
         generate_content_config=types.GenerateContentConfig(
             max_output_tokens=STORYTELLER_MAX_OUTPUT_TOKENS,
         ),

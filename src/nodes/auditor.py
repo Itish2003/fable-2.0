@@ -65,7 +65,7 @@ async def run_auditor(
         state = FableAgentState()
 
     # Source: the parsed StorytellerOutput from the LlmAgent's output_key.
-    storyteller_output = ctx.state.get("storyteller_output") or {}
+    storyteller_output = ctx.state.get("temp:storyteller_output") or {}
     chapter_meta = storyteller_output.get("chapter_meta") or {}
     story_text = (ctx.state.get("last_story_text") or "").strip()
 

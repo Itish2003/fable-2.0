@@ -50,7 +50,11 @@ def create_query_planner() -> LlmAgent:
         description="Analyzes the Fable premise and produces a structured research plan.",
         model="gemini-3.1-flash-lite",
         output_schema=QueryPlan,
-        output_key="query_plan",
+        # `temp:` prefix bypasses FableAgentState schema validation
+        # (ADK sessions/state.py:39-40). The query plan is transient --
+        # parse_queries consumes it once and converts to the swarm's
+        # input list. No need to persist as long-term session state.
+        output_key="temp:query_plan",
         generate_content_config=types.GenerateContentConfig(
             response_mime_type="application/json"
         ),
@@ -84,13 +88,13 @@ Return a QueryPlan with a targets array. One target per entity. Be exhaustive.
 
 @node(name="query_parser")
 def parse_queries(ctx: Context, node_input: Any) -> List[str]:
-    plan = ctx.state.get("query_plan") or {}
+    plan = ctx.state.get("temp:query_plan") or {}
     targets = plan.get("targets") or []
 
     if not targets:
         premise = ctx.state.get("story_premise", "Fable Story")
         logger.warning(
-            "Query Planner produced no targets (state.query_plan=%r). "
+            "Query Planner produced no targets (state.temp:query_plan=%r). "
             "Using single premise fallback.", plan,
         )
         return [

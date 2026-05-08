@@ -74,5 +74,7 @@ def create_summarizer_node() -> LlmAgent:
         instruction=_SUMMARIZER_INSTRUCTION,
         before_model_callback=_inject_last_chapter_prose,
         output_schema=ChapterSummaryOutput,
-        output_key="summary_output",
+        # `temp:` prefix bypasses FableAgentState schema validation; the
+        # summarizer_persist consumes this once and appends to chapter_summaries.
+        output_key="temp:summary_output",
     )

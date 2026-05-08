@@ -144,7 +144,7 @@ async def _persist_lore_commits(state, lore_commits: list[dict]) -> None:
 async def archivist_merge(
     ctx: Context, node_input: Any
 ) -> AsyncGenerator[Event, None]:
-    delta = ctx.state.get("archivist_delta") or {}
+    delta = ctx.state.get("temp:archivist_delta") or {}
     if not delta:
         logger.info("archivist_merge: empty delta, no state changes")
         if False:

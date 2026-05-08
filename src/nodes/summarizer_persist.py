@@ -63,7 +63,7 @@ async def _embed_chapter_summary(chapter_n: int, summary_text: str) -> None:
 async def summarizer_persist(
     ctx: Context, node_input: Any
 ) -> AsyncGenerator[Event, None]:
-    out = ctx.state.get("summary_output") or {}
+    out = ctx.state.get("temp:summary_output") or {}
     summary_text = (out.get("summary") or "").strip()
     if not summary_text:
         logger.info("summarizer_persist: empty summary, no-op")

@@ -251,34 +251,72 @@ async def story_websocket(websocket: WebSocket, session_id: str):
                     "data": chap_meta,
                 }, session_id)
 
-            # Restore pending choices if the session is suspended at a HITL.
-            # Scan events in reverse — the last unresolved RequestInput is always
-            # at the tail (a resolved one has a response event after it).
+            # Restore pending HITL only if it's actually UNANSWERED.
+            # The previous heuristic ("last request_input function_call in
+            # reverse order") was wrong: it picked the most recent fc
+            # regardless of whether a function_response with the same id
+            # had already been recorded. For a chapter-mid session where
+            # all setup HITLs were answered ages ago, that re-emitted a
+            # stale setup_world_primer request_input on every reload,
+            # which the frontend's request_input handler treats as a NEW
+            # pause and resets choices/pendingQuestions to []. Net effect:
+            # the chapter_meta we just emitted got wiped.
+            # Correct logic: collect every adk_request_input function_call,
+            # mark answered when a same-id function_response exists, and
+            # only re-emit if the most recent UNANSWERED one survives.
             try:
                 from google.adk.workflow.utils._workflow_hitl_utils import (  # noqa: PLC2701
                     has_request_input_function_call,
                     get_request_input_interrupt_ids,
                 )
                 events = getattr(existing, "events", None) or []
+                # First pass: collect all answered fc ids.
+                answered_ids: set[str] = set()
+                for event in events:
+                    if not event.content or not event.content.parts:
+                        continue
+                    for part in event.content.parts:
+                        fr = getattr(part, "function_response", None)
+                        if fr and getattr(fr, "name", None) == "adk_request_input":
+                            fr_id = getattr(fr, "id", None)
+                            if fr_id:
+                                answered_ids.add(fr_id)
+                # Second pass: walk events in reverse, find the latest
+                # unanswered request_input function_call.
+                pending_event = None
+                pending_fc_id: str | None = None
                 for event in reversed(events):
                     if not has_request_input_function_call(event):
                         continue
                     ids = get_request_input_interrupt_ids(event)
-                    req_id = ids[0] if ids else "unknown"
+                    fc_id = ids[0] if ids else None
+                    if fc_id and fc_id not in answered_ids:
+                        pending_event = event
+                        pending_fc_id = fc_id
+                        break
+                if pending_event is not None and pending_fc_id is not None:
                     req_msg = "Please provide input."
-                    if event.content and event.content.parts:
-                        for part in event.content.parts:
+                    if pending_event.content and pending_event.content.parts:
+                        for part in pending_event.content.parts:
                             fc = getattr(part, "function_call", None)
-                            if fc and getattr(fc, "id", None) == req_id:
+                            if fc and getattr(fc, "id", None) == pending_fc_id:
                                 req_msg = (fc.args or {}).get("message", req_msg)
                                 break
-                    logger.info("Re-emitting pending HITL '%s' for resumed session %s", req_id, session_id)
+                    logger.info(
+                        "Re-emitting genuinely-pending HITL '%s' for resumed session %s",
+                        pending_fc_id, session_id,
+                    )
                     await manager.send_personal_message({
                         "type": "request_input",
-                        "interrupt_id": req_id,
+                        "interrupt_id": pending_fc_id,
                         "message": req_msg,
                     }, session_id)
-                    break
+                else:
+                    logger.info(
+                        "No unanswered HITL on resume for session %s "
+                        "(all %d adk_request_input fcalls have responses)",
+                        session_id, len(answered_ids),
+                    )
             except Exception:
                 logger.warning("Could not restore pending HITL for session %s", session_id, exc_info=True)
         

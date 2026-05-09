@@ -25,8 +25,19 @@ from pydantic import BaseModel, Field
 class CharacterUpdate(BaseModel):
     """How a single character's state shifted this chapter. Mirrors the
     update_relationship tool: trust delta clamps -100..+100, disposition
-    overrides, dynamic_tags merge."""
+    overrides, dynamic_tags merge.
 
+    Was previously stored under a dict keyed by name (``dict[str, CharacterUpdate]``);
+    Gemini AI Studio's response_schema serializer rejects ``additionalProperties``
+    so the key has been promoted to a regular field on the entry, and the
+    container type changed to ``list[CharacterUpdate]``. The merge node
+    re-keys by ``character_name`` for downstream dict-shaped state.
+    """
+
+    character_name: str = Field(
+        default="",
+        description="Name of the character this entry updates (was the dict key).",
+    )
     trust_delta: int = Field(
         default=0,
         description="Signed delta to apply to trust_level. Clamped -100..+100 by the merge.",
@@ -46,8 +57,16 @@ class CharacterUpdate(BaseModel):
 
 
 class VoiceUpdate(BaseModel):
-    """Speech-pattern profile update. Mirrors update_character_voice tool."""
+    """Speech-pattern profile update. Mirrors update_character_voice tool.
 
+    Same dict->list migration as ``CharacterUpdate``; ``character_name``
+    was the old dict key.
+    """
+
+    character_name: str = Field(
+        default="",
+        description="Name of the character this voice profile updates (was the dict key).",
+    )
     speech_patterns: str = Field(default="", description="Empty = no change.")
     vocabulary_level: str = Field(default="", description="Empty = no change.")
     verbal_tics: list[str] = Field(default_factory=list)
@@ -117,6 +136,21 @@ class PendingConsequenceEntry(BaseModel):
     due_by_chapter: int
 
 
+class LoreAttribute(BaseModel):
+    """One key/value attribute on a LoreNode. Replaces the
+    ``dict[str, str | int]`` shape that crashed Gemini AI Studio's
+    response_schema serializer (``additionalProperties is not supported``).
+
+    ``value`` is always a string on the wire; the merge node passes it
+    through verbatim and lets downstream lore lookups treat numerics
+    as strings (the lore graph is text-search; numeric semantics aren't
+    needed here).
+    """
+
+    key: str = Field(default="", description="Attribute name (e.g. 'age', 'role', 'year').")
+    value: str = Field(default="", description="Attribute value as a string.")
+
+
 class LoreCommitEntry(BaseModel):
     """Deferred GraphRAG entity ingestion. Mirrors commit_lore tool.
 
@@ -124,17 +158,15 @@ class LoreCommitEntry(BaseModel):
     later chapters' lore_lookup can surface it.
     """
 
-    entity_name: str
+    entity_name: str = Field(default="")
     node_type: str = Field(default="character", description="character / location / faction / event.")
     universe: str = Field(default="", description="Empty = use state.universes[0] or 'unknown'.")
-    attributes: dict[str, str | int] = Field(
-        default_factory=dict,
+    attributes: list[LoreAttribute] = Field(
+        default_factory=list,
         description=(
             "Free-form metadata persisted onto LoreNode.attributes. "
-            "Accepts string or int values to absorb model drift on numeric "
-            "keys like 'age', 'power_level', 'year' (the same drift class "
-            "that crashed StakesTracking.power_debt_incurred via strict "
-            "dict[str, str] typing)."
+            "Each entry is a {key, value} pair (was a dict[str, str | int] but "
+            "Gemini AI Studio rejects additionalProperties on response_schema)."
         ),
     )
 
@@ -158,9 +190,12 @@ class ArchivistDelta(BaseModel):
     in a single atomic pass.
     """
 
-    # Character + voice
-    character_updates: dict[str, CharacterUpdate] = Field(default_factory=dict)
-    voice_updates: dict[str, VoiceUpdate] = Field(default_factory=dict)
+    # Character + voice (lists, not dicts: Gemini AI Studio's
+    # response_schema serializer rejects additionalProperties; the
+    # merge node re-keys by character_name into the dict-shaped
+    # canonical state.)
+    character_updates: list[CharacterUpdate] = Field(default_factory=list)
+    voice_updates: list[VoiceUpdate] = Field(default_factory=list)
 
     # Timeline & divergences
     new_divergences: list[DivergenceUpdate] = Field(default_factory=list)
@@ -187,6 +222,7 @@ __all__ = [
     "ArchivistDelta",
     "CharacterUpdate",
     "VoiceUpdate",
+    "LoreAttribute",
     "DivergenceUpdate",
     "MaterializedRipple",
     "CanonEventStatusUpdate",

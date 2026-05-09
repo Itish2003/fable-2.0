@@ -106,7 +106,19 @@ async def _persist_lore_commits(state, lore_commits: list[dict]) -> None:
                 continue
             node_type = entry.get("node_type") or "character"
             universe = entry.get("universe") or fallback_universe
-            attributes = entry.get("attributes") or {}
+            # attributes is now list[{key, value}] on the wire (was dict[str, X]
+            # but Gemini AI Studio rejects additionalProperties); convert back
+            # to dict shape for downstream LoreNode storage.
+            raw_attrs = entry.get("attributes") or []
+            if isinstance(raw_attrs, dict):
+                # Backwards-compat: tolerate stale dict-shaped deltas if any.
+                attributes = dict(raw_attrs)
+            else:
+                attributes = {
+                    str(a.get("key") or ""): a.get("value", "")
+                    for a in raw_attrs
+                    if isinstance(a, dict) and a.get("key")
+                }
             chunk_payload = (
                 f"{entity_name}\n{json.dumps(attributes, sort_keys=True, default=str)}"
             )
@@ -152,11 +164,15 @@ async def archivist_merge(
         return
 
     # ─── 1. character_updates ─────────────────────────────────────────────
+    # Schema is now list[CharacterUpdate]; the dict key migrated to a
+    # `character_name` field on each entry (see archivist_delta.py).
     actives = dict(ctx.state.get("active_characters") or {})
     edge_writes: list[tuple[str, int, str]] = []
-    for raw_name, raw_upd in (delta.get("character_updates") or {}).items():
-        name = sanitize_context(raw_name)
+    for raw_upd in (delta.get("character_updates") or []):
         upd = dict(raw_upd or {})
+        name = sanitize_context(upd.get("character_name") or "")
+        if not name:
+            continue
         cur = dict(actives.get(name) or {})
         # Initialize defaults on first sighting (mirrors update_relationship)
         cur.setdefault("trust_level", 0)
@@ -182,10 +198,13 @@ async def archivist_merge(
     ctx.state["active_characters"] = actives
 
     # ─── 2. voice_updates ────────────────────────────────────────────────
+    # Schema is now list[VoiceUpdate]; same dict-to-list migration.
     voices = dict(ctx.state.get("character_voices") or {})
-    for raw_name, raw_vu in (delta.get("voice_updates") or {}).items():
-        name = sanitize_context(raw_name)
+    for raw_vu in (delta.get("voice_updates") or []):
         vu = dict(raw_vu or {})
+        name = sanitize_context(vu.get("character_name") or "")
+        if not name:
+            continue
         cur = dict(voices.get(name) or {})
         if vu.get("speech_patterns"):
             cur["speech_patterns"] = sanitize_context(vu["speech_patterns"])
@@ -336,8 +355,8 @@ async def archivist_merge(
 
     logger.info(
         "archivist_merge: applied delta (chars=%d voices=%d divs=%d strain=%d violations=%d)",
-        len(delta.get("character_updates") or {}),
-        len(delta.get("voice_updates") or {}),
+        len(delta.get("character_updates") or []),
+        len(delta.get("voice_updates") or []),
         len(delta.get("new_divergences") or []),
         len(delta.get("power_strain") or []),
         len(delta.get("violations") or []),

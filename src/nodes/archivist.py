@@ -54,16 +54,23 @@ RULES:
 
 AXIS GUIDE:
 
-  - ``character_updates``: For each named character with a meaningful
-     interaction, set trust_delta (-100..+100; positive builds, negative
-     damages), disposition (short tag like "wary", "allied"), and any
-     dynamic_tags worth tracking ("wounded", "suspicious"). Set
-     is_present True/False if their stage status flipped.
+  - ``character_updates``: A LIST of entries, one per named character
+     with a meaningful interaction. Each entry MUST set ``character_name``
+     (the character being updated) and may set trust_delta (-100..+100;
+     positive builds, negative damages), disposition (short tag like
+     "wary", "allied"), dynamic_tags ("wounded", "suspicious"), and
+     is_present (True/False if their stage status flipped).
+     EXAMPLE: ``[{"character_name": "Tatsuya", "trust_delta": 5,
+     "disposition": "guarded"}, {"character_name": "Miyuki",
+     "dynamic_tags": ["protective"]}]``
 
-  - ``voice_updates``: When a NEW canon character spoke for the first
-     time OR an existing voice profile is stale, populate speech_patterns,
-     vocabulary_level, verbal_tics, topics_to_avoid, example_dialogue.
-     Skip if the character's existing profile is still accurate.
+  - ``voice_updates``: A LIST of entries, one per character whose voice
+     profile changed. Each entry MUST set ``character_name`` and may
+     populate speech_patterns, vocabulary_level, verbal_tics,
+     topics_to_avoid, example_dialogue. Skip a character if their
+     existing profile is still accurate; emit a NEW entry only when a
+     canon character spoke for the first time OR the existing profile
+     is stale.
 
   - ``new_divergences``: ONLY when the protagonist's actions altered the
      canon timeline. canon_event_id = brief identifier of the original
@@ -101,8 +108,12 @@ AXIS GUIDE:
 
   - ``lore_commits``: For genuinely-new entities (characters, factions,
      locations, events) that aren't yet in the knowledge base, commit
-     them so future chapters can find them via lore_lookup. Include
-     entity_name, node_type, and any attributes worth persisting.
+     them so future chapters can find them via lore_lookup. Each entry
+     has entity_name, node_type, and ``attributes`` AS A LIST OF
+     ``{"key": "...", "value": "..."}`` PAIRS (not a dict). EXAMPLE:
+     ``{"entity_name": "Saegusa Mayumi", "node_type": "character",
+     "attributes": [{"key": "role", "value": "Student Council President"},
+     {"key": "year", "value": "Senior"}]}``
 
   - ``violations``: If the prose breached an epistemic boundary,
      anti-Worf rule, or canon constraint, log it. violation_type ∈

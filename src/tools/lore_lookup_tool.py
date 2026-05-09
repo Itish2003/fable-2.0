@@ -25,7 +25,8 @@ from sqlalchemy.orm import selectinload
 
 from src.database import AsyncSessionLocal
 from src.services.embedding_service import get_embedding
-from src.state.lore_models import LoreEmbedding
+from src.state.lore_models import LoreEmbedding, LoreNode
+from src.utils.canon_aliases import resolve_alias
 from src.utils.sanitizer import sanitize_context
 
 logger = logging.getLogger("fable.tools.lore_lookup")
@@ -81,6 +82,67 @@ async def retrieve_lore(entity: str) -> list[dict]:
         return []
 
     distance_expr = LoreEmbedding.embedding.cosine_distance(query_vector)
+
+    # ENTITY-FIRST RETRIEVAL: if the query resolves to a canonical character,
+    # prefer chunks linked to that entity's node (ranked by cosine distance
+    # within the entity's chunks). This unlocks the canon corpus -- a bare
+    # name query like "Tatsuya Shiba" doesn't have strong embedding affinity
+    # to canon prose like "He stared at his sister with analytical
+    # detachment", but the entity link tells us those chunks are ABOUT
+    # Tatsuya regardless. We still rank by cosine within the entity's
+    # chunk set so query-relevant prose surfaces first.
+    canonical = resolve_alias(safe_entity)
+    if canonical is not None:
+        async with AsyncSessionLocal() as session:
+            node_stmt = select(LoreNode.id).where(LoreNode.name == canonical)
+            node_id = (await session.execute(node_stmt)).scalar_one_or_none()
+            if node_id is None:
+                # Try existing-name forms that resolve to the same canonical
+                # (handles the duplicate situation pre-Phase-C dedupe).
+                all_nodes = (await session.execute(select(LoreNode.id, LoreNode.name))).all()
+                for nid, nname in all_nodes:
+                    if resolve_alias(nname) == canonical:
+                        node_id = nid
+                        break
+            if node_id is not None:
+                # Fetch entity-linked chunks ranked by cosine to the query.
+                # The threshold is RELAXED here (0.6 instead of 0.4) because
+                # we already have entity certainty from the node link; cosine
+                # is just for in-entity ranking, not for membership filtering.
+                stmt = (
+                    select(LoreEmbedding, distance_expr.label("distance"))
+                    .options(selectinload(LoreEmbedding.node))
+                    .where(LoreEmbedding.node_id == node_id)
+                    .order_by(distance_expr)
+                    .limit(TOP_K * 4)
+                )
+                rows = (await session.execute(stmt)).all()
+                matches: list[dict] = []
+                for emb, distance in rows:
+                    chunk = emb.chunk_text or ""
+                    if len(chunk) < MIN_CHUNK_LENGTH:
+                        continue
+                    node = emb.node
+                    matches.append(
+                        {
+                            "chunk_text": chunk,
+                            "volume": emb.volume,
+                            "node_name": node.name if node else None,
+                            "node_type": node.node_type if node else None,
+                            "attributes": dict(node.attributes or {}) if node else {},
+                        }
+                    )
+                    if len(matches) >= TOP_K:
+                        break
+                if matches:
+                    logger.info(
+                        "retrieve_lore(%r): entity-linked path returned %d/%d (canonical=%r, node_id=%d)",
+                        safe_entity, len(matches), len(rows), canonical, node_id,
+                    )
+                    return matches
+
+    # COSINE FALLBACK: query isn't a known entity (or no chunks linked yet).
+    # Fall back to global cosine search with both threshold filters.
     async with AsyncSessionLocal() as session:
         # Over-fetch (4x TOP_K) so we still hit TOP_K substantive matches
         # after filtering out noise shells whose embedding artifact ranks
@@ -119,8 +181,8 @@ async def retrieve_lore(entity: str) -> list[dict]:
             break
     if skipped_distance or skipped_short:
         logger.info(
-            "retrieve_lore(%r): scanned %d, skipped %d above MAX_DISTANCE=%.2f, %d below MIN_CHUNK_LENGTH=%d, returning %d",
-            safe_entity, len(rows), skipped_distance, MAX_DISTANCE, skipped_short, MIN_CHUNK_LENGTH, len(matches),
+            "retrieve_lore(%r): cosine fallback scanned %d, skipped %d distant, %d short, returning %d",
+            safe_entity, len(rows), skipped_distance, skipped_short, len(matches),
         )
     return matches
 

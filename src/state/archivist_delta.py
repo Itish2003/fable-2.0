@@ -182,6 +182,34 @@ class ViolationEntry(BaseModel):
     severity: str = Field(default="", description="minor / moderate / major / critical (optional).")
 
 
+class NarrativeThreadUpdate(BaseModel):
+    """Add or advance a first-class narrative thread.
+
+    Threads are plot lines the OC is involved in; the storyteller's
+    THREADS IN MOTION block reads from state.narrative_threads to know
+    what arcs need development. This entry tells the merge node to
+    upsert a thread by name.
+    """
+
+    name: str = Field(default="", description="Short thread title; matched against state.narrative_threads[*].name on merge.")
+    status: str = Field(
+        default="seeded",
+        description="One of: seeded / rising / climax / resolved / dormant. Empty defaults to 'seeded'.",
+    )
+    key_chars: list[str] = Field(
+        default_factory=list,
+        description="Canonical names of characters central to this thread.",
+    )
+    notes: str = Field(
+        default="",
+        description="Short context the storyteller should remember for advancing this thread.",
+    )
+    due_for_climax: int = Field(
+        default=0,
+        description="Chapter by which the thread should reach climax (0 = open-ended).",
+    )
+
+
 class ArchivistDelta(BaseModel):
     """Everything that changed in this chapter.
 
@@ -217,12 +245,22 @@ class ArchivistDelta(BaseModel):
     # Audit log
     violations: list[ViolationEntry] = Field(default_factory=list)
 
+    # Phase H+: first-class narrative threads. Maintained chapter-over-chapter
+    # so the storyteller's THREADS IN MOTION block can render them at every
+    # turn. The archivist emits seeded/rising/climax/resolved status updates
+    # as threads advance.
+    narrative_thread_updates: list[NarrativeThreadUpdate] = Field(
+        default_factory=list,
+        description="Plot-thread updates emitted this chapter; merge node upserts to state.narrative_threads.",
+    )
+
 
 __all__ = [
     "ArchivistDelta",
     "CharacterUpdate",
     "VoiceUpdate",
     "LoreAttribute",
+    "NarrativeThreadUpdate",
     "DivergenceUpdate",
     "MaterializedRipple",
     "CanonEventStatusUpdate",

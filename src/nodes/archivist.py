@@ -120,6 +120,22 @@ AXIS GUIDE:
      {epistemic_leak, anti_worf, canon_break, power_scaling, knowledge_*};
      include character + concept + the offending quote.
 
+  - ``narrative_thread_updates``: First-class plot threads the OC is
+     involved in. Maintain them across chapters so the storyteller's
+     THREADS IN MOTION block can render what's still in motion. Status
+     vocabulary: ``seeded`` (just introduced) → ``rising`` (escalating)
+     → ``climax`` (peak engagement this chapter) → ``resolved`` (closed)
+     → ``dormant`` (paused; will resume later). EMIT one update per
+     thread that GAINED ATTENTION this chapter. New threads spawn here;
+     existing threads (matched by ``name``) advance status. Examples:
+     ``{"name": "Shibuya Veil at Lord Street Docks", "status": "rising",
+     "key_chars": ["Kageaki Ren", "Skitter"], "notes": "Ren scouts the
+     docks; energy density rising; PRT alarm not yet"}``;
+     ``{"name": "Ren / Sophia surveillance", "status": "rising",
+     "key_chars": ["Sophia Hess"], "due_for_climax": 8}``.
+     Only emit when a thread genuinely advanced or began. Skip
+     unchanged threads.
+
 When there is genuinely nothing to report on an axis, omit it (empty
 container / empty string / 0). The merge node treats omissions as
 no-op.

@@ -370,6 +370,56 @@ async def archivist_merge(
             )
         ctx.state["violation_log"] = log
 
+    # ─── 9.5. narrative thread upserts (Phase H+) ──────────────────────
+    # Threads are first-class plot lines; storyteller's THREADS IN MOTION
+    # block reads from state.narrative_threads to know what arcs to
+    # advance. Match by name; update existing or append new.
+    thread_updates = delta.get("narrative_thread_updates") or []
+    if thread_updates:
+        chapter_n = int(ctx.state.get("chapter_count") or 1)
+        threads = list(ctx.state.get("narrative_threads") or [])
+        # Build a name -> index map so updates upsert in place rather than dup.
+        idx_by_name = {
+            (t.get("name") or "").strip().lower(): i
+            for i, t in enumerate(threads) if isinstance(t, dict)
+        }
+        for upd in thread_updates:
+            if not isinstance(upd, dict):
+                continue
+            name = sanitize_context(upd.get("name") or "")
+            if not name:
+                continue
+            status = sanitize_context(upd.get("status") or "seeded") or "seeded"
+            chars = [sanitize_context(c) for c in (upd.get("key_chars") or []) if c]
+            notes = sanitize_context(upd.get("notes") or "")
+            due = int(upd.get("due_for_climax") or 0)
+
+            existing_idx = idx_by_name.get(name.lower())
+            if existing_idx is not None:
+                t = dict(threads[existing_idx])
+                t["status"] = status
+                t["last_advanced_chapter"] = chapter_n
+                if chars:
+                    # union with existing
+                    t["key_chars"] = list({*t.get("key_chars", []), *chars})
+                if notes:
+                    t["notes"] = notes
+                if due:
+                    t["due_for_climax"] = due
+                threads[existing_idx] = t
+            else:
+                threads.append({
+                    "name": name,
+                    "status": status,
+                    "key_chars": chars,
+                    "seeded_chapter": chapter_n,
+                    "last_advanced_chapter": chapter_n,
+                    "due_for_climax": due,
+                    "notes": notes,
+                })
+                idx_by_name[name.lower()] = len(threads) - 1
+        ctx.state["narrative_threads"] = threads
+
     # ─── 10. side-effect persistence (LoreEdges + LoreCommits) ─────────
     # Best-effort, fire-and-forget; failures don't block state writes.
     await _persist_relationship_edges(ctx.state, edge_writes)

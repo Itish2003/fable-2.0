@@ -154,6 +154,11 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
     pendingQuestions.every((q) => Boolean(questionAnswers[q.question]));
 
   const [inputText, setInputText] = useState('');
+  // selectedChoice: when set, the user picked a choice button but hasn't
+  // submitted yet. Lets them add free-form direction in the input bar before
+  // sending. Submit combines `${choice.text}\n\n[ADDITIONAL DIRECTION] ${inputText}`
+  // into one user message; backend doesn't need protocol changes.
+  const [selectedChoice, setSelectedChoice] = useState<Choice | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('lore');
   const [rewriteOpen, setRewriteOpen] = useState(false);
@@ -179,16 +184,43 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [rewriteOpen]);
 
+  // Clear any pending choice selection whenever a new set of choices arrives
+  // (i.e., a new chapter rendered). Stops the prior chapter's selected choice
+  // from leaking into the next turn.
+  useEffect(() => {
+    setSelectedChoice(null);
+  }, [choices]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim()) return;
+    const text = inputText.trim();
 
     if (pendingInput) {
-      submitInput(inputText.trim());
-    } else {
-      sendChoice(inputText.trim());
+      // HITL questions use only free text, no choice combination.
+      if (!text) return;
+      submitInput(text);
+      setInputText('');
+      return;
     }
+
+    // Build the combined user message from selectedChoice + free text.
+    // Three valid shapes:
+    //   choice + text → "<choice>\n\n[ADDITIONAL DIRECTION] <text>"
+    //   choice only   → "<choice>"  (preserves prior behavior)
+    //   text only     → "<text>"    (preserves prior behavior)
+    let message: string | null = null;
+    if (selectedChoice && text) {
+      message = `${selectedChoice.text}\n\n[ADDITIONAL DIRECTION] ${text}`;
+    } else if (selectedChoice) {
+      message = selectedChoice.text;
+    } else if (text) {
+      message = text;
+    }
+    if (!message) return;
+
+    sendChoice(message, questionAnswers);
     setInputText('');
+    setSelectedChoice(null);
   };
 
   const openRewrite = () => {
@@ -405,11 +437,14 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
                     key={idx}
                     choice={choice}
                     disabled={!isConnected || !allQuestionsAnswered}
+                    selected={selectedChoice?.text === choice.text}
                     onClick={() => {
-                      // Option A: chapter choices ALWAYS go through sendChoice
-                      // (plain message, fresh invocation_id). question_answers
-                      // is bundled when the meta-questions panel was rendered.
-                      sendChoice(choice.text, questionAnswers);
+                      // Toggle selection. Click same choice again to deselect;
+                      // submit happens when the user hits Enter / Send so they
+                      // can add an [ADDITIONAL DIRECTION] comment first.
+                      setSelectedChoice((prev) =>
+                        prev?.text === choice.text ? null : choice,
+                      );
                     }}
                   />
                 ))}
@@ -438,26 +473,56 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
                 </>
               )}
 
-              <form
-                onSubmit={handleSubmit}
-                className={`relative flex-1 flex items-center bg-slate-900 border rounded-xl shadow-lg transition-colors duration-200 overflow-hidden ${pendingInput ? 'border-indigo-500 ring-1 ring-indigo-500/50' : 'border-slate-700 focus-within:border-slate-500'}`}
-              >
+              <div className="flex-1 flex flex-col gap-2">
+                {selectedChoice && !pendingInput && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/80 border border-slate-700">
+                    <span className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold shrink-0">
+                      Selected
+                    </span>
+                    <span className="flex-1 text-sm text-slate-200 truncate">
+                      {selectedChoice.text}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedChoice(null)}
+                      className="shrink-0 p-1 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                      title="Deselect"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                <form
+                  onSubmit={handleSubmit}
+                  className={`relative flex items-center bg-slate-900 border rounded-xl shadow-lg transition-colors duration-200 overflow-hidden ${pendingInput ? 'border-indigo-500 ring-1 ring-indigo-500/50' : 'border-slate-700 focus-within:border-slate-500'}`}
+                >
                 <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   disabled={!isConnected || (isTyping && !pendingInput)}
-                  placeholder={pendingInput ? 'Answer the prompt...' : 'What do you do next?'}
+                  placeholder={
+                    pendingInput
+                      ? 'Answer the prompt...'
+                      : selectedChoice
+                      ? 'Add direction (optional) — Enter to send'
+                      : 'What do you do next? (or click a choice above)'
+                  }
                   className="flex-1 bg-transparent border-none py-4 pl-5 pr-12 text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-0 disabled:opacity-50"
                 />
                 <button
                   type="submit"
-                  disabled={!inputText.trim() || !isConnected || (isTyping && !pendingInput)}
+                  disabled={
+                    (!inputText.trim() && !selectedChoice) ||
+                    !isConnected ||
+                    (isTyping && !pendingInput)
+                  }
                   className="absolute right-3 p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-50 disabled:hover:bg-transparent transition-colors"
                 >
                   <Send className="w-5 h-5" />
                 </button>
-              </form>
+                </form>
+              </div>
             </div>
           </div>
         </div>
@@ -669,10 +734,12 @@ function InfoRow({ state }: { state: StoryStateData }) {
 function ChoiceButton({
   choice,
   disabled,
+  selected,
   onClick,
 }: {
   choice: Choice;
   disabled: boolean;
+  selected: boolean;
   onClick: () => void;
 }) {
   const theme = CHOICE_THEMES[choice.tier];
@@ -683,7 +750,7 @@ function ChoiceButton({
       onClick={onClick}
       disabled={disabled}
       title={choice.tied_event ? `Ties to: ${choice.tied_event}` : undefined}
-      className={`relative w-full px-3 py-2 text-[13px] text-left rounded-lg transition-colors border ${theme.base} ${theme.hover} ${theme.border} ${theme.text} disabled:opacity-50 disabled:cursor-not-allowed`}
+      className={`relative w-full px-3 py-2 text-[13px] text-left rounded-lg transition-colors border ${theme.base} ${theme.hover} ${theme.border} ${theme.text} disabled:opacity-50 disabled:cursor-not-allowed ${selected ? 'ring-2 ring-offset-2 ring-offset-slate-950 ring-slate-200' : ''}`}
     >
       <span className="flex items-start gap-2">
         <span className="flex-1 leading-snug">{choice.text}</span>

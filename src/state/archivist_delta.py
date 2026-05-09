@@ -127,9 +127,15 @@ class LoreCommitEntry(BaseModel):
     entity_name: str
     node_type: str = Field(default="character", description="character / location / faction / event.")
     universe: str = Field(default="", description="Empty = use state.universes[0] or 'unknown'.")
-    attributes: dict[str, str] = Field(
+    attributes: dict[str, str | int] = Field(
         default_factory=dict,
-        description="Free-form metadata persisted onto LoreNode.attributes.",
+        description=(
+            "Free-form metadata persisted onto LoreNode.attributes. "
+            "Accepts string or int values to absorb model drift on numeric "
+            "keys like 'age', 'power_level', 'year' (the same drift class "
+            "that crashed StakesTracking.power_debt_incurred via strict "
+            "dict[str, str] typing)."
+        ),
     )
 
 

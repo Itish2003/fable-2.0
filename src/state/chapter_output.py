@@ -70,11 +70,27 @@ class TimelineMeta(BaseModel):
 
 
 class StakesTracking(BaseModel):
-    """Costs, near-misses, and power-debt accumulated this chapter."""
+    """Costs, near-misses, and power-debt accumulated this chapter.
+
+    ``power_debt_incurred`` accepts either severity strings ("low" /
+    "medium" / "high" / "critical") OR numeric strain deltas as values.
+    Originally typed ``dict[str, str]`` but the model frequently treats
+    the value as a number when the key name suggests numeric content
+    (e.g., "strain_level"). Strict typing crashed the entire storyteller
+    invocation via ADK's SetModelResponseTool validation; accepting the
+    union sidesteps the drift class entirely.
+    """
 
     costs_paid: list[str] = Field(default_factory=list)
     near_misses: list[str] = Field(default_factory=list)
-    power_debt_incurred: dict[str, str] = Field(default_factory=dict)
+    power_debt_incurred: dict[str, str | int] = Field(
+        default_factory=dict,
+        description=(
+            "Map of technique-name -> severity bucket "
+            "('low'/'medium'/'high'/'critical') OR numeric strain delta. "
+            "Accept either; downstream consumers should coerce as needed."
+        ),
+    )
     consequences_triggered: list[str] = Field(default_factory=list)
 
 

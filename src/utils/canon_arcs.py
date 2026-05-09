@@ -38,6 +38,10 @@ _WORM_ARCS: list[dict] = [
     {
         "name": "Arc 1: Gestation",
         "range": (2011, 4, 2011, 4),
+        # `volume_patterns`: SQL LIKE patterns matching lore_embeddings.volume
+        # for this arc. Used by retrieve_lore() in per-arc mode to scope
+        # canonical retrieval to material from this story window.
+        "volume_patterns": ["Arc 01 - Gestation", "Arc 02 - Insinuation"],
         "canon_events": [
             "Taylor Hebert's trigger event has just occurred (locker incident, January 2011).",
             "Lung controls the docks; ABB territory expansion is escalating.",
@@ -65,6 +69,7 @@ _WORM_ARCS: list[dict] = [
     {
         "name": "Arc 2: Insinuation",
         "range": (2011, 4, 2011, 5),
+        "volume_patterns": ["Arc 02 - Insinuation", "Arc 03 - Agitation"],
         "canon_events": [
             "Taylor's first cape outing as Skitter; Lung confrontation in the docks.",
             "Lung is incapacitated by Skitter (and unbeknownst to her, Tattletale).",
@@ -84,6 +89,9 @@ _WORM_ARCS: list[dict] = [
     {
         "name": "Arc 3-5: Agitation / Shell / Hive",
         "range": (2011, 5, 2011, 6),
+        "volume_patterns": [
+            "Arc 03 - Agitation", "Arc 04 - Shell", "Arc 05 - Hive",
+        ],
         "canon_events": [
             "Bakuda triggers her ABB coup; bomb attacks across BB.",
             "Skitter's costume gets tinker upgrades (Parian collaboration).",
@@ -103,6 +111,7 @@ _WORM_ARCS: list[dict] = [
     {
         "name": "Arc 6-7: Tangle / Buzz",
         "range": (2011, 6, 2011, 7),
+        "volume_patterns": ["Arc 06 - Tangle", "Arc 07 - Buzz"],
         "canon_events": [
             "Slaughterhouse Nine arrive in Brockton Bay; Jack Slash is selecting recruits.",
             "Empire 88 fractures; Kaiser is killed; Purity strikes out.",
@@ -121,6 +130,7 @@ _WORM_ARCS: list[dict] = [
     {
         "name": "Arc 8: Extermination",
         "range": (2011, 7, 2011, 7),
+        "volume_patterns": ["Arc 08 - Extermination"],
         "canon_events": [
             "Leviathan attacks Brockton Bay (canonical, May/June 2011 in some readings).",
             "Major casualties: Aegis, Velocity, Dauntless, others.",
@@ -137,6 +147,7 @@ _WORM_ARCS: list[dict] = [
     {
         "name": "Arc 11+: Infestation onward",
         "range": (2011, 8, 2012, 12),
+        "volume_patterns": [],  # too broad; fall back to per-character lookup
         "canon_events": [
             "Skitter's reign over Brockton Bay's villain territory.",
             "Travelers' arc; Echidna manifestation; the Echidna fight.",

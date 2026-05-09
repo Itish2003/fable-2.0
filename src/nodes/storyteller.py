@@ -983,31 +983,68 @@ async def _inject_active_character_lore(
         ("CHAPTER OUTPUT REMINDER",  _build_chapter_output_reminder_block(current_chapter)),
     ]
 
-    # Per-active-character canonical chunk retrieval (Cast Dossier — per-arc
-    # version is Phase 2; this is the existing per-character lookup).
+    # CAST DOSSIER — consolidated per-character block.
+    # For each active character: dynamic state (trust/disposition/tags) +
+    # canonical retrieval scoped to the current arc (Phase 2 per-arc).
+    # Falls through silently for empty cast.
     cast_dossier_block: Optional[str] = None
     if active_characters:
+        # Determine the current arc's volume patterns for per-arc retrieval.
+        # We try each universe in turn; the first arc with non-empty
+        # volume_patterns wins. Falls back to no-pattern (universal lookup)
+        # when no canonical arc is matched.
+        universes = state.get("universes") or []
+        date = (state.get("current_timeline_date") or "").strip()
+        arc_volume_patterns: list[str] = []
+        for univ in universes:
+            arc = lookup_arc(univ, date)
+            if arc and arc.get("volume_patterns"):
+                arc_volume_patterns = arc["volume_patterns"]
+                break
+
         char_blocks: list[str] = []
         for name in active_names:
-            matches = await retrieve_lore(name)
-            if not matches:
-                continue
-            bullets: list[str] = []
-            for m in matches:
-                chunk = (m.get("chunk_text") or "").strip()
-                vol = m.get("volume") or "?"
-                bullets.append(f"  - [{vol}] {chunk}")
-            char_blocks.append(f"### {name} — canonical retrieval\n" + "\n".join(bullets))
+            sub_lines: list[str] = [f"### {name}"]
+            # 1) Dynamic state from active_characters
+            ac = active_characters.get(name) or {}
+            dyn_bits: list[str] = []
+            if ac.get("trust_level") is not None:
+                dyn_bits.append(f"trust={ac['trust_level']}")
+            if ac.get("disposition"):
+                dyn_bits.append(f"disposition={ac['disposition']!r}")
+            if ac.get("dynamic_tags"):
+                dyn_bits.append(f"tags={ac['dynamic_tags']}")
+            if ac.get("is_present") is not None:
+                dyn_bits.append(f"present={ac['is_present']}")
+            if dyn_bits:
+                sub_lines.append("  Dynamic state: " + "; ".join(dyn_bits))
+            if ac.get("last_interaction"):
+                sub_lines.append(f"  Last interaction: {ac['last_interaction']}")
+            # 2) Canonical retrieval — per-arc preferred, fallback to global
+            matches = await retrieve_lore(name, volume_patterns=arc_volume_patterns or None)
+            if matches:
+                sub_lines.append("  Canonical excerpts (current-arc preferred):")
+                for m in matches:
+                    chunk = (m.get("chunk_text") or "").strip()
+                    vol = m.get("volume") or "?"
+                    sub_lines.append(f"    • [{vol}] {chunk[:280]}")
+            else:
+                sub_lines.append("  (no canonical retrieval — defer to your training-data knowledge)")
+            char_blocks.append("\n".join(sub_lines))
         if char_blocks:
+            arc_note = (
+                f" Per-arc retrieval scoped to: {', '.join(arc_volume_patterns)}.\n"
+                if arc_volume_patterns
+                else ""
+            )
             cast_dossier_block = (
-                "[!!] CAST DOSSIER — canonical retrieval for each active character.\n"
-                "Use these excerpts as the source-of-truth for how the character is\n"
-                "depicted, written, and behaves. Match the canonical voice exactly.\n\n"
+                "[!!] CAST DOSSIER — per active character: dynamic state + canonical\n"
+                f"excerpts.{arc_note}Use these as the source-of-truth for how the character is depicted,\n"
+                "written, and behaves. Match the canonical voice exactly.\n\n"
                 + "\n\n".join(char_blocks)
             )
     if cast_dossier_block:
-        # Insert just after CHARACTER VOICES so per-character data clusters
-        # together. Find the index of CHARACTER VOICES block in raw_blocks.
+        # Insert just after CHARACTER VOICES so per-character data clusters together.
         for i, (label, _) in enumerate(raw_blocks):
             if label == "CHARACTER VOICES":
                 raw_blocks.insert(i + 1, ("CAST DOSSIER", cast_dossier_block))

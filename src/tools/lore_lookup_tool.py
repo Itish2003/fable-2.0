@@ -54,7 +54,10 @@ MAX_DISTANCE = 0.4
 MIN_CHUNK_LENGTH = 60
 
 
-async def retrieve_lore(entity: str) -> list[dict]:
+async def retrieve_lore(
+    entity: str,
+    volume_patterns: list[str] | None = None,
+) -> list[dict]:
     """Vector-search the LoreEmbedding store for ``entity`` and return up to
     :data:`TOP_K` matches whose cosine_distance is below :data:`MAX_DISTANCE`.
 
@@ -67,6 +70,14 @@ async def retrieve_lore(entity: str) -> list[dict]:
             "node_type": str | None,
             "attributes": dict,
         }
+
+    ``volume_patterns`` (Phase 2 per-arc retrieval): an optional list of
+    SQL LIKE patterns. When present, the entity-first path filters chunks
+    to those whose volume matches ANY pattern. Use to scope retrieval to
+    the current canonical arc -- e.g. ``["Arc 01 - Gestation", "Arc 02 -
+    Insinuation"]`` for a Worm story set in Apr-May 2011. If filtering
+    yields no results, automatically falls back to unfiltered entity
+    retrieval so we still return SOMETHING canon-grounded.
 
     Returns ``[]`` if embedding fails, no rows match, or all returned rows
     are below the similarity threshold.
@@ -109,14 +120,27 @@ async def retrieve_lore(entity: str) -> list[dict]:
                 # The threshold is RELAXED here (0.6 instead of 0.4) because
                 # we already have entity certainty from the node link; cosine
                 # is just for in-entity ranking, not for membership filtering.
-                stmt = (
-                    select(LoreEmbedding, distance_expr.label("distance"))
-                    .options(selectinload(LoreEmbedding.node))
-                    .where(LoreEmbedding.node_id == node_id)
-                    .order_by(distance_expr)
-                    .limit(TOP_K * 4)
-                )
-                rows = (await session.execute(stmt)).all()
+                async def _fetch_entity_chunks(volume_filter: list[str] | None):
+                    stmt = (
+                        select(LoreEmbedding, distance_expr.label("distance"))
+                        .options(selectinload(LoreEmbedding.node))
+                        .where(LoreEmbedding.node_id == node_id)
+                    )
+                    if volume_filter:
+                        from sqlalchemy import or_
+                        stmt = stmt.where(or_(*[
+                            LoreEmbedding.volume.like(p) for p in volume_filter
+                        ]))
+                    stmt = stmt.order_by(distance_expr).limit(TOP_K * 4)
+                    return (await session.execute(stmt)).all()
+
+                # Try arc-filtered first; fall back to unfiltered if empty.
+                rows = await _fetch_entity_chunks(volume_patterns) if volume_patterns else []
+                used_arc_filter = bool(volume_patterns and rows)
+                if not rows:
+                    rows = await _fetch_entity_chunks(None)
+                    used_arc_filter = False
+
                 matches: list[dict] = []
                 for emb, distance in rows:
                     chunk = emb.chunk_text or ""
@@ -135,9 +159,10 @@ async def retrieve_lore(entity: str) -> list[dict]:
                     if len(matches) >= TOP_K:
                         break
                 if matches:
+                    arc_note = f" (arc-filtered={volume_patterns})" if used_arc_filter else ""
                     logger.info(
-                        "retrieve_lore(%r): entity-linked path returned %d/%d (canonical=%r, node_id=%d)",
-                        safe_entity, len(matches), len(rows), canonical, node_id,
+                        "retrieve_lore(%r): entity-linked path returned %d/%d (canonical=%r, node_id=%d)%s",
+                        safe_entity, len(matches), len(rows), canonical, node_id, arc_note,
                     )
                     return matches
 

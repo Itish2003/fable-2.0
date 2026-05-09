@@ -21,7 +21,13 @@ export type ChoiceTier = 'canon' | 'divergence' | 'character' | 'wildcard';
 
 export type Choice = {
   text: string;
+  // Backend now ships `tier` as a free string (the wire-level Literal
+  // was crashing the storyteller invocation on drift; the auditor
+  // re-validates tier coverage at runtime). Frontend keeps the union
+  // for theming but should treat unknowns as 'character' fallback.
   tier: ChoiceTier;
+  // tied_event is now empty string (not null) when no event is tied;
+  // backend defaults to '' on the wire schema.
   tied_event?: string | null;
 };
 
@@ -262,8 +268,14 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
           const choicesIn = Array.isArray(meta.choices) ? meta.choices : [];
           const normalized: Choice[] = choicesIn.map((c) => ({
             text: String(c.text ?? ''),
-            tier: c.tier,
-            tied_event: c.tied_event ?? null,
+            // Backend may emit unknown tier strings on rare drift; auditor
+            // would normally route to retry but the frontend should still
+            // render gracefully if one slips through (e.g. via the
+            // recovery synthetic-fallback path).
+            tier: (c.tier as ChoiceTier) || 'character',
+            // Backend ships '' for no-event-tied; coerce to null so the
+            // ChoiceButton's truthiness check works as before.
+            tied_event: c.tied_event ? c.tied_event : null,
           }));
           setChoices(normalized);
           setChoicePrompt('');

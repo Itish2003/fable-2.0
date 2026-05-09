@@ -7,7 +7,14 @@ from src.plugins.global_instruction import (
     GlobalInstructionPlugin,
     storyteller_instruction_provider,
 )
-from src.plugins.suspicion_plugin import SuspicionPlugin
+# Suspicion plugin disabled post-refactor: it filtered on agent_name ==
+# 'choice_generator' (a node that no longer exists; choices now come
+# from the storyteller's chapter_meta). The plugin's tier vocabulary
+# (oblivious/uneasy/suspicious/breakthrough) also doesn't match the
+# new ChoiceTier (canon/divergence/character/wildcard). Re-introducing
+# requires both a filter update AND a tier-vocabulary alignment; track
+# as a separate feature rather than a refactor revival.
+# from src.plugins.suspicion_plugin import SuspicionPlugin
 from src.plugins.telemetry import TelemetryPlugin
 from src.services.memory_service import memory_service
 from src.services.session_manager import session_service
@@ -28,7 +35,9 @@ fable_app = App(
             name="fable_global_instruction",
         ),
         TelemetryPlugin(),
-        SuspicionPlugin(),
+        # SuspicionPlugin() removed post-refactor (see import-block comment
+        # above). Re-add when the plugin is updated for the new
+        # ChoiceTier vocabulary and storyteller-as-choice-emitter flow.
         # Bundled logging — replaces the raw-token-logging duplication
         # previously baked into TelemetryPlugin.
         LoggingPlugin(name="fable_logging"),

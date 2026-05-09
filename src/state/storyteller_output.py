@@ -24,13 +24,19 @@ class StorytellerOutput(BaseModel):
     """What the storyteller emits per chapter."""
 
     prose: str = Field(
+        default="",
         description=(
             "The chapter body, 4000-8000 words. Begin with sensory grounding. "
             "Do NOT include a markdown header (e.g. '# Chapter N') -- the "
-            "chapter number is prepended downstream."
-        )
+            "chapter number is prepended downstream. Default '' so partial "
+            "outputs validate cleanly; the auditor catches empty-prose and "
+            "routes to the retry path."
+        ),
     )
-    chapter_meta: ChapterOutput
+    chapter_meta: ChapterOutput = Field(
+        default_factory=ChapterOutput,
+        description="Structured choices + questions tail. Defaulted so partial outputs validate.",
+    )
 
 
 __all__ = ["StorytellerOutput"]

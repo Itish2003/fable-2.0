@@ -19,8 +19,6 @@ mutation the tool-loop used to perform.
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
@@ -74,10 +72,19 @@ class MaterializedRipple(BaseModel):
 
 
 class CanonEventStatusUpdate(BaseModel):
-    """Retire an upcoming canon timeline event. Mirrors advance_event_status tool."""
+    """Retire an upcoming canon timeline event. Mirrors advance_event_status tool.
 
-    event_name: str = Field(description="Name (or event_id) of an entry in canon_timeline.events.")
-    new_status: Literal["upcoming", "occurred", "modified", "prevented"] = "occurred"
+    ``new_status`` is a free string (not Literal) so a model drift on this
+    field doesn't crash the entire archivist invocation. archivist_merge
+    validates the value at runtime against {upcoming, occurred, modified,
+    prevented} and falls back to 'occurred' for unrecognised values.
+    """
+
+    event_name: str = Field(default="", description="Name (or event_id) of an entry in canon_timeline.events.")
+    new_status: str = Field(
+        default="occurred",
+        description="upcoming / occurred / modified / prevented. Empty or unknown defaults to 'occurred' in merge.",
+    )
     notes: str = Field(default="", description="One-line description of how it played out.")
 
 

@@ -25,7 +25,6 @@ from src.nodes.intent_router import run_intent_router
 # Idiomatic-ADK refactor: declarative LlmAgents with output_schema +
 # downstream FunctionNode merge nodes. The merge nodes apply the parsed
 # schema artifacts to canonical state fields deterministically.
-from src.nodes.storyteller_merge import storyteller_merge
 from src.nodes.archivist_merge import archivist_merge
 from src.nodes.summarizer_persist import summarizer_persist
 
@@ -64,7 +63,6 @@ def build_fable_workflow() -> Workflow:
     archivist_node = build_node(archivist_agent)
     summarizer_node = build_node(summarizer_agent)
 
-    storyteller_merge_node = storyteller_merge
     archivist_merge_node = archivist_merge
     summarizer_persist_node = summarizer_persist
 
@@ -136,13 +134,15 @@ def build_fable_workflow() -> Workflow:
         }),
 
         # ─────────────────── chapter generation ─────────────────
-        # Storyteller emits StorytellerOutput (prose + chapter_meta) into
-        # state.storyteller_output via output_key. storyteller_merge
-        # prepends the deterministic "# Chapter N" header from
-        # state.chapter_count and writes last_story_text +
-        # last_chapter_meta. Auditor validates structurally + content.
-        (storyteller_node, storyteller_merge_node),
-        (storyteller_merge_node, auditor_node),
+        # Storyteller emits StorytellerOutput (prose + chapter_meta)
+        # into state.temp:storyteller_output via output_key. The auditor
+        # validates structurally + content; on AUDIT PASSED it prepends
+        # the deterministic "# Chapter N" header from state.chapter_count
+        # and writes the canonical last_story_text + last_chapter_meta
+        # (single-writer invariant: failed retries don't overwrite the
+        # prior PASSED chapter's prose, so the next storyteller turn's
+        # PRIOR CHAPTER CONTEXT picks up clean tonal anchoring).
+        (storyteller_node, auditor_node),
         (auditor_node, {
             "passed": archivist_node,
             "failed": storyteller_node,

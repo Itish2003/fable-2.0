@@ -87,7 +87,12 @@ class CharacterKnowledgeLimitsDraft(BaseModel):
 
 class LoreKeeperOutput(BaseModel):
     world_primer: str = Field(
-        description="Markdown synthesis of the crossover (3-6 paragraphs)."
+        default="",
+        description=(
+            "Markdown synthesis of the crossover (3-6 paragraphs). "
+            "Defaulted to '' so partial keeper outputs validate cleanly; "
+            "the injector routes to the fallback extractor when this is empty."
+        ),
     )
     forbidden_concepts: List[str] = Field(default_factory=list)
     anti_worf_rules: List[AntiWorfRule] = Field(default_factory=list)

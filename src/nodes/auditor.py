@@ -1,21 +1,18 @@
-"""Auditor node — consumes the typed ``state.storyteller_output``.
+"""Auditor node — single writer of canonical chapter state.
 
-No more fenced-JSON parsing (``parse_chapter_tail`` is dead code; the
-storyteller now emits a Pydantic-validated StorytellerOutput via
-``output_schema``). The auditor reads the parsed dict, validates the
-structural rules that USED to live as Pydantic constraints on
-ChapterOutput (4 choices spanning all 4 tiers exactly, 1-2 questions),
-then runs the deterministic content audits (epistemic leak, anti-Worf,
-source-universe leakage scan).
+Reads ``state.temp:storyteller_output`` (parsed StorytellerOutput dict
+emitted by the storyteller LlmAgent), validates structurally and
+content-wise, and on AUDIT PASSED prepends the deterministic
+``# Chapter N`` header and writes the canonical fields
+(``last_story_text``, ``last_chapter_meta``). The header arithmetic
+comes from ``state.chapter_count`` so the model never has to compute it
+(killed bug #1 — frozen "# Chapter 2" header drift).
 
-Writing ``last_story_text`` and ``last_chapter_meta`` is now
-``storyteller_merge_node``'s job (it prepends the deterministic
-``# Chapter N`` header from ``state.chapter_count``); the auditor only
-increments ``chapter_count`` on AUDIT PASSED and runs the per-chapter
-research budget reset.
-
-The ``reset_archivist_counters`` call is gone — the per-chapter tool-cap
-machinery was deleted with the archivist rewrite.
+**Single-writer invariant**: ``last_story_text`` and ``last_chapter_meta``
+are ONLY written here, ONLY on AUDIT PASSED. On retry/recovery the
+canonical fields retain the LAST PASSED chapter's values, so the
+storyteller's PRIOR CHAPTER CONTEXT injection picks up clean tonal
+anchoring from the actual previous chapter, not the failed draft.
 """
 
 import logging
@@ -54,10 +51,11 @@ async def run_auditor(
 ) -> AsyncGenerator[Event, None]:
     """Validates structural + content rules; routes "passed" / "failed" / "recovery".
 
-    Reads ``state.storyteller_output`` (parsed by the storyteller
-    LlmAgent) and ``state.last_story_text`` (composed by
-    ``storyteller_merge`` with the deterministic header). Does not parse
-    raw text and does not write either of those fields.
+    On PASSED: prepends ``# Chapter N`` header from state.chapter_count
+    and writes ``last_story_text`` + ``last_chapter_meta``; increments
+    chapter_count; resets per-chapter research counter.
+    On FAILED/RECOVERY: leaves canonical state untouched so the next
+    storyteller turn picks up the prior chapter as PRIOR CHAPTER CONTEXT.
     """
     try:
         state = FableAgentState(**ctx.state.to_dict())
@@ -66,12 +64,12 @@ async def run_auditor(
 
     # Source: the parsed StorytellerOutput from the LlmAgent's output_key.
     storyteller_output = ctx.state.get("temp:storyteller_output") or {}
+    prose = (storyteller_output.get("prose") or "").strip()
     chapter_meta = storyteller_output.get("chapter_meta") or {}
-    story_text = (ctx.state.get("last_story_text") or "").strip()
 
     logger.info(
         "Auditor: prose=%d chars, %d choices, %d questions",
-        len(story_text),
+        len(prose),
         len(chapter_meta.get("choices") or []),
         len(chapter_meta.get("questions") or []),
     )
@@ -87,7 +85,7 @@ async def run_auditor(
         return "failed"
 
     # 0. Empty prose / empty meta — the storyteller dropped its output.
-    if not story_text:
+    if not prose:
         route = _record_failure("empty prose")
         yield Event(actions=EventActions(route=route))
         return
@@ -117,9 +115,9 @@ async def run_auditor(
 
     # 2. Epistemic Boundary — prose only (chapter_meta legitimately
     # references forbidden concepts in summary / canon_elements_used).
-    story_lower = story_text.lower()
+    prose_lower = prose.lower()
     for concept in state.forbidden_concepts:
-        if concept.lower() in story_lower:
+        if concept.lower() in prose_lower:
             route = _record_failure(f"Epistemic leak: forbidden concept '{concept}'")
             yield Event(actions=EventActions(route=route))
             return
@@ -127,9 +125,9 @@ async def run_auditor(
     # 3. Anti-Worf — prose only.
     defeat_keywords = ["defeated", "beaten", "lost easily", "overpowered by"]
     for char_name, rule in state.anti_worf_rules.items():
-        if char_name.lower() in story_lower:
+        if char_name.lower() in prose_lower:
             for keyword in defeat_keywords:
-                if keyword in story_lower:
+                if keyword in prose_lower:
                     route = _record_failure(
                         f"Anti-Worf constraint broken for {char_name}. Rule: {rule}"
                     )
@@ -138,13 +136,18 @@ async def run_auditor(
 
     logger.info("AUDIT PASSED: Text is canon-compliant.")
 
-    # Reset retry counter and advance chapter_count. last_story_text /
-    # last_chapter_meta were already written by storyteller_merge.
+    # ─── SINGLE-WRITER COMMIT (only on PASS) ──────────────────────────────────
+    # Prepend the deterministic header from canonical state so the model
+    # never has to do arithmetic on chapter_count -- kills bug #1's drift.
+    chapter_n = int(ctx.state.get("chapter_count") or 1)
+    ctx.state["last_story_text"] = f"# Chapter {chapter_n}\n\n{prose}"
+    ctx.state["last_chapter_meta"] = chapter_meta
+
+    # Reset retry counter and advance chapter_count.
     ctx.state[_AUDIT_RETRY_KEY] = 0
     try:
-        prev = int(ctx.state.get("chapter_count", 1) or 1)
-        ctx.state["chapter_count"] = prev + 1
-        logger.info("Chapter %d audited; advancing chapter_count -> %d", prev, prev + 1)
+        ctx.state["chapter_count"] = chapter_n + 1
+        logger.info("Chapter %d audited; advancing chapter_count -> %d", chapter_n, chapter_n + 1)
     except Exception:
         pass
 
@@ -159,7 +162,7 @@ async def run_auditor(
     if not story_universes:
         premise = (ctx.state.get("story_premise") or "")[:2000]
         story_universes = _heuristic_universes(premise)
-    leaks = detect_leakage(story_text, story_universes)
+    leaks = detect_leakage(prose, story_universes)
     if leaks:
         log = list(ctx.state.get("violation_log") or [])
         for leak in leaks:

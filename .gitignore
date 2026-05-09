@@ -37,6 +37,9 @@ adk-2.0-map.html
 .code-review-graph/
 .claude/
 
+# Scraped canonical corpora (large + copyrighted; reproducible via scripts/scrape_*.py)
+data/
+
 # IDEs
 .vscode/
 .idea/

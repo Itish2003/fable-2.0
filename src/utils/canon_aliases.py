@@ -137,15 +137,150 @@ _JUJUTSU: dict[str, list[str]] = {
 }
 
 
+# ─── Worm by Wildbow ────────────────────────────────────────────────────────
+#
+# Worm is a 1.7M-word web serial. Most characters have a CIVILIAN NAME and a
+# CAPE NAME. The cape name is canonical for retrieval (it's how they're
+# referred to in scenes most of the time); civilian names are aliases.
+#
+# Naming convention: "<Cape Name>" is canonical. "<Civilian Name>" is an
+# alias. For unmasked / civilian-only characters (Danny, Sophia's family,
+# etc.) use the civilian name canonical.
+#
+_WORM: dict[str, list[str]] = {
+    # Undersiders (Taylor's team)
+    "Skitter": ["Taylor Hebert", "Taylor", "Hebert", "Weaver", "Khepri"],
+    "Tattletale": ["Lisa Wilbourn", "Lisa", "Sarah Livsey"],
+    "Bitch": ["Rachel Lindt", "Rachel", "Hellhound"],
+    "Grue": ["Brian Laborn", "Brian"],
+    "Regent": ["Alec", "Hijack"],
+    "Imp": ["Aisha Laborn", "Aisha"],
+    "Parian": ["Sabah"],
+    "Foil": ["Flechette", "Lily"],
+
+    # Wards (Brockton Bay protectorate juniors)
+    "Clockblocker": ["Dennis"],
+    "Vista": ["Missy Biron", "Missy"],
+    "Aegis": ["Carlos"],
+    "Gallant": ["Dean Stansfield", "Dean"],
+    "Kid Win": ["Chris"],
+    "Browbeat": [],
+    "Shadow Stalker": ["Sophia Hess", "Sophia"],
+    "Triumph": ["Rory Christner", "Rory"],
+    "Flechette": ["Foil", "Lily"],
+
+    # Brockton Bay Protectorate (adults)
+    "Armsmaster": ["Colin Wallis", "Colin", "Defiant"],
+    "Miss Militia": ["Hannah"],
+    "Dauntless": [],
+    "Battery": ["Puppy", "Battery"],
+    "Assault": ["Madcap", "Ethan"],
+    "Velocity": [],
+
+    # Triumvirate (national heroes)
+    "Legend": ["Keith"],
+    "Alexandria": ["Rebecca Costa-Brown", "Rebecca"],
+    "Eidolon": ["David"],
+
+    # Cauldron / conspiracy
+    "Contessa": ["Fortuna"],
+    "Doctor Mother": [],
+    "Number Man": ["Kurt", "Harbinger"],
+
+    # Slaughterhouse Nine
+    "Jack Slash": ["Jack", "Jacob"],
+    "Bonesaw": ["Riley Davis", "Riley"],
+    "Crawler": ["Ned"],
+    "Mannequin": ["Alan Gramme", "Alan"],
+    "Burnscar": ["Mimi"],
+    "Cherish": ["Cherie Vasil", "Cherie"],
+    "Shatterbird": [],
+    "Siberian": ["Manton", "William Manton"],
+    "Hatchet Face": [],
+    "Hookwolf": ["Brad Meadows", "Brad"],
+
+    # Empire 88 / villains
+    "Kaiser": ["Max Anders", "Max"],
+    "Purity": ["Kayden Anders", "Kayden"],
+    "Krieg": [],
+    "Othala": [],
+    "Victor": [],
+    "Stormtiger": [],
+    "Cricket": [],
+    "Night": [],
+    "Fog": [],
+    "Rune": [],
+    "Crusader": [],
+
+    # ABB
+    "Lung": ["Kenta"],
+    "Oni Lee": [],
+    "Bakuda": [],
+
+    # Other recurring villains / capes
+    "Coil": ["Thomas Calvert", "Calvert"],
+    "Echidna": ["Noelle Meinhardt", "Noelle"],
+    "Trickster": ["Krouse"],
+    "Sundancer": ["Marissa Newland", "Marissa"],
+    "Genesis": [],
+    "Ballistic": [],
+    "Faultline": ["Melanie Fitch", "Melanie"],
+    "Newter": [],
+    "Spitfire": [],
+    "Gregor the Snail": ["Gregor"],
+    "Labyrinth": ["Elle"],
+    "Mouse Protector": [],
+    "Dragon": [],
+    "Tagg": [],
+    "Glaistig Uaine": ["Faerie Queen", "Ciara"],
+
+    # Endbringers
+    "Leviathan": [],
+    "Behemoth": [],
+    "Simurgh": ["Ziz"],
+
+    # Civilians + supporting
+    "Danny Hebert": ["Daniel Hebert"],
+    "Annette Hebert": [],
+    "Emma Barnes": ["Emma"],
+    "Madison Clements": ["Madison"],
+    "Greg Veder": ["Greg"],
+    "Mr. Gladly": ["Mr Gladly", "Mr. G"],
+    "Charlotte": [],
+    "Forrest": [],
+    "Sierra": [],
+    "Bryce Kiley": ["Bryce"],
+
+    # Birdcage / late-game
+    "Marquis": ["Amelia's father"],
+    "Panacea": ["Amy Dallon", "Amy"],
+    "Glory Girl": ["Victoria Dallon", "Victoria", "Antares"],
+    "Carol Dallon": ["Brandish"],
+    "Mark Dallon": ["Flashbang"],
+    "Crystal Pelham": ["Laserdream"],
+    "Eric Pelham": ["Shielder"],
+    "Sarah Pelham": ["Lady Photon"],
+    "Neil Pelham": ["Manpower"],
+
+    # Misc / late
+    "Scion": ["Zion", "Warrior"],
+    "Tohu": [],
+    "Bohu": [],
+    "Saint": [],
+    "Teacher": [],
+}
+
+
 # ─── Reverse index + helpers ────────────────────────────────────────────────
 
-CANON_CHARACTERS: dict[str, list[str]] = {**_MAHOUKA, **_JUJUTSU}
+CANON_CHARACTERS: dict[str, list[str]] = {**_MAHOUKA, **_JUJUTSU, **_WORM}
 
 # Bare surnames that appear in multiple canonical names. NEVER resolve these
 # alone; require a given-name disambiguator. Maintained manually because the
 # detection logic needs to be conservative (false positives are worse than
 # false negatives for entity linking).
 AMBIGUOUS_BARE_NAMES: set[str] = {
+    # Mahouka surnames shared across multiple canonical characters
     "Shiba",       # Tatsuya, Miyuki, Miya, Tatsurou
     "Saegusa",     # Mayumi, Kasumi, Izumi
     "Yotsuba",     # Maya (also a clan name)
@@ -157,6 +292,14 @@ AMBIGUOUS_BARE_NAMES: set[str] = {
     "Yoshida",     # Mikihiko (common surname)
     "Mitsui",      # Honoka (common surname)
     "Iori",        # Utahime / Isori
+
+    # Worm: shared surnames within the canonical cast
+    "Hebert",      # Taylor + Danny + Annette
+    "Anders",      # Max Kaiser + Kayden Purity
+    "Pelham",      # Sarah + Neil + Crystal + Eric (New Wave)
+    "Dallon",      # Carol + Mark + Amy + Victoria
+    "Laborn",      # Brian + Aisha
+    "Manton",      # William + Siberian
 }
 
 

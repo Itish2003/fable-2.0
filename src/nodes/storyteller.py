@@ -13,19 +13,19 @@ from src.state.storyteller_output import StorytellerOutput
 from src.tools.lore_lookup_tool import lore_lookup, retrieve_lore
 from src.tools.research_tools import trigger_research
 
-# Storyteller uses the larger gemini-3-flash-preview to honor the 3-4k word
+# Storyteller uses the larger gemini-3-flash-preview to honor the 4-8k word
 # chapter target. The lite tier ('gemini-3.1-flash-lite') compresses
 # responses to ~1-2k words regardless of prompt instructions.
 STORYTELLER_MODEL = "gemini-3-flash-preview"
 
-# Token budget for a structured output containing 3-4k words of prose plus the
+# Token budget for a structured output containing 4-8k words of prose plus the
 # chapter_meta tail plus tool-call overhead.
-STORYTELLER_MAX_OUTPUT_TOKENS = 12288
+STORYTELLER_MAX_OUTPUT_TOKENS = 24576
 
 logger = logging.getLogger("fable.storyteller")
 
-_CHAPTER_MIN_WORDS = 3000
-_CHAPTER_MAX_WORDS = 4000
+_CHAPTER_MIN_WORDS = 4000
+_CHAPTER_MAX_WORDS = 8000
 
 # Storyteller now emits a single ``StorytellerOutput`` (Pydantic schema)
 # via ADK 2.0's output_schema mode. The chapter header (``# Chapter N``)

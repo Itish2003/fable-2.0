@@ -62,6 +62,29 @@ class PowerDebt(BaseModel):
     recent_feats: List[str] = Field(default_factory=list, description="Powers used in the current turn")
 
 
+class NarrativeThread(BaseModel):
+    """A first-class narrative arc the OC is involved in. Maintained by the
+    archivist; surfaced in the storyteller's THREADS IN MOTION block so the
+    model knows what plot lines need advancement and at what status.
+    """
+    name: str = Field(description="Short title, e.g. 'Shibuya Veil at Lord Street Docks'")
+    status: str = Field(
+        default="seeded",
+        description="One of: seeded / rising / climax / resolved / dormant",
+    )
+    key_chars: List[str] = Field(
+        default_factory=list,
+        description="Canonical names of characters central to this thread.",
+    )
+    seeded_chapter: int = Field(default=0, description="Chapter where the thread was introduced.")
+    last_advanced_chapter: int = Field(default=0, description="Most recent chapter where the thread was developed.")
+    due_for_climax: int = Field(
+        default=0,
+        description="Chapter by which this thread should reach climax (0 = open-ended).",
+    )
+    notes: str = Field(default="", description="Free-form thread context the storyteller should remember.")
+
+
 # ─── ROOT AgentState ──────────────────────────────────────────────────────────
 
 class FableAgentState(BaseModel):
@@ -187,3 +210,19 @@ class FableAgentState(BaseModel):
 
     # Auditor violation history (written by the report_violation tool)
     violation_log: List[Dict[str, Any]] = Field(default_factory=list, description="Audit trail of canon/tone violations flagged during play.")
+
+    # Phase H+: anti-rut + thread tracking for the redesigned storyteller prompt.
+    # recent_chapter_openings: first ~200 chars of the last 3 chapters,
+    # written by the auditor on commit. Surfaced in the prompt's
+    # ANTI-PATTERN block as "do not start similarly".
+    recent_chapter_openings: List[str] = Field(
+        default_factory=list,
+        description="First ~200 chars of last 3 chapters; surfaced as anti-rut directive.",
+    )
+    # narrative_threads: first-class plot threads the OC is involved in.
+    # Maintained by the archivist; surfaced in the THREADS IN MOTION
+    # block so the model knows what arcs need advancement.
+    narrative_threads: List[NarrativeThread] = Field(
+        default_factory=list,
+        description="Active plot threads with status (seeded/rising/climax/resolved/dormant).",
+    )

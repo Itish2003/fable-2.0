@@ -143,6 +143,14 @@ async def run_auditor(
     ctx.state["last_story_text"] = f"# Chapter {chapter_n}\n\n{prose}"
     ctx.state["last_chapter_meta"] = chapter_meta
 
+    # Anti-rut: capture the first ~200 chars of this chapter's prose so the
+    # storyteller's ANTI-PATTERN block can show the model recent openings
+    # to AVOID repeating. FIFO ring buffer of last 3 entries.
+    opening = prose[:200].replace("\n", " ").strip()
+    recent_openings = list(ctx.state.get("recent_chapter_openings") or [])
+    recent_openings.append(opening)
+    ctx.state["recent_chapter_openings"] = recent_openings[-3:]
+
     # Reset retry counter and advance chapter_count.
     ctx.state[_AUDIT_RETRY_KEY] = 0
     try:

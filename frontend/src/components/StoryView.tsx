@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Send,
   Activity,
@@ -379,8 +381,47 @@ export default function StoryView({ story, onBack }: StoryViewProps) {
         <div className="flex-1 overflow-y-auto pt-24 pb-4 px-6 md:px-12 lg:px-24">
           <div className="max-w-3xl mx-auto prose prose-invert prose-slate prose-lg">
             {prose ? (
-              <div className="whitespace-pre-wrap leading-relaxed tracking-wide font-serif text-slate-200">
-                {prose}
+              <div className="leading-relaxed tracking-wide font-serif text-slate-200">
+                {/*
+                  ReactMarkdown renders the auditor-prepended `# Chapter N`
+                  header as an actual H1 + paragraphs as <p> elements with
+                  proper spacing. The `prose prose-invert` Tailwind class
+                  on the parent gives consistent dark-mode typography.
+                */}
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1: ({ children }) => (
+                      <h1 className="text-3xl font-bold text-slate-100 mb-6 pb-2 border-b border-slate-800">
+                        {children}
+                      </h1>
+                    ),
+                    h2: ({ children }) => (
+                      <h2 className="text-2xl font-semibold text-slate-100 mt-8 mb-4">
+                        {children}
+                      </h2>
+                    ),
+                    p: ({ children }) => (
+                      <p className="my-4 text-slate-200 leading-loose">{children}</p>
+                    ),
+                    em: ({ children }) => (
+                      <em className="italic text-slate-100">{children}</em>
+                    ),
+                    strong: ({ children }) => (
+                      <strong className="font-semibold text-slate-100">{children}</strong>
+                    ),
+                    blockquote: ({ children }) => (
+                      <blockquote className="border-l-4 border-indigo-700/40 pl-4 my-4 italic text-slate-300">
+                        {children}
+                      </blockquote>
+                    ),
+                    hr: () => (
+                      <hr className="my-8 border-slate-800" />
+                    ),
+                  }}
+                >
+                  {prose}
+                </ReactMarkdown>
               </div>
             ) : (
               <div className="text-slate-600 italic font-serif">

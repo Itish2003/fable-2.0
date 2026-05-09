@@ -775,14 +775,17 @@ def _build_narrative_ledger_block(state, current_chapter: int) -> Optional[str]:
 
 
 def _build_chapter_continuity_block(state) -> Optional[str]:
-    """CHAPTER CONTINUITY — chapter summaries window + tighter prose tail.
-    Prose tail trimmed from 1500 → 800 chars to reduce its dominance over
-    the player directive's attention budget."""
+    """CHAPTER CONTINUITY — chapter summaries window + minimal closing-beat
+    reminder. Prose tail trimmed aggressively (800 → 400 chars) and
+    reframed as "where the prior beat ENDED" rather than "tonal anchor"
+    -- this stops the model from treating its own prior output as the
+    style template (the source of recurring syntactic-pattern ruts like
+    'X didn't just Y; it Z')."""
     chapter_summaries = state.get("chapter_summaries") or []
     last_story_text = state.get("last_story_text") or ""
     if not chapter_summaries and not last_story_text:
         return None
-    lines = ["CHAPTER CONTINUITY — pick up directly from the prior beat (UNLESS the player directive sends the OC elsewhere)."]
+    lines = ["CHAPTER CONTINUITY — pick up from the prior beat ONLY if the player directive doesn't redirect the OC elsewhere. The directive WINS conflicts."]
     if chapter_summaries:
         total = len(chapter_summaries)
         window = chapter_summaries[-10:]
@@ -794,13 +797,49 @@ def _build_chapter_continuity_block(state) -> Optional[str]:
             n = win_start + offset
             lines.append(f"  Ch.{n}: {str(summary)[:500]}")
     if last_story_text:
-        # Trimmed: 800 chars not 1500. Less content-dominance over player directive.
-        tail = last_story_text[-800:] if len(last_story_text) > 800 else last_story_text
-        lines.append(f"\n─── Closing prose of the most recent chapter (~800 chars; tonal anchor only) ───")
-        if len(last_story_text) > 800:
-            lines.append("…[earlier prose elided]")
+        # Trimmed AGGRESSIVELY (~400 chars; was 800). Reframed as a
+        # "where-the-beat-ended" reminder rather than a tonal anchor so
+        # the model doesn't pattern-match its own prior style.
+        tail = last_story_text[-400:] if len(last_story_text) > 400 else last_story_text
+        lines.append(
+            "\n─── Where the prior beat ended (positional reference only — do "
+            "NOT mirror its prose style or syntactic patterns) ───"
+        )
+        if len(last_story_text) > 400:
+            lines.append("…[earlier prose elided; do not reconstruct]")
         lines.append(tail)
     return "\n".join(lines)
+
+
+def _extract_opening_skeleton(opening: str) -> Optional[str]:
+    """Heuristic: pull a syntactic skeleton from the first ~12 words of an
+    opening line. Used by the ANTI-PATTERN block to call out structural
+    patterns to avoid (not just exact text repetition).
+
+    Returns a generalised pattern like ``"The [NOUN] didn't just X; it Y"``
+    when one of the canonical formulae matches; None otherwise.
+    """
+    if not opening:
+        return None
+    head = opening.strip()
+    # Pattern 1: "The X didn't just Y; (it|they|<pronoun>) Z" — Wildbow-tic
+    # the model has been over-fitting to.
+    m1 = re.match(r"The\s+\w+(?:\s+\w+){0,5}\s+didn['’]t\s+just\s+", head, re.IGNORECASE)
+    if m1:
+        return "\"The [NOUN] didn't just [VERB]; (it|they) [VERB-AMPLIFIED]\" — negation-then-amplification opening"
+    # Pattern 2: leading sensory-inventory ("It smelled of X, tasted of Y...")
+    m2 = re.match(r"(It|The\s+\w+)\s+(smelled|tasted|sounded|felt)\s+of\s+", head, re.IGNORECASE)
+    if m2:
+        return "\"[SUBJECT] smelled/tasted/sounded of X, Y, and Z\" — sensory inventory opening"
+    # Pattern 3: "The air in X..."
+    m3 = re.match(r"The\s+air\s+(in|of|around)\s+", head, re.IGNORECASE)
+    if m3:
+        return "\"The air in/of/around [LOCATION]...\" — atmospheric weather opening"
+    # Pattern 4: clock / time-of-day opening
+    m4 = re.match(r"(It\s+was|At\s+\w+\s*[oa]['’]?clock|The\s+(morning|evening|night|sun|moon)\s+)", head, re.IGNORECASE)
+    if m4:
+        return "\"It was [TIME] / The [time-of-day]...\" — temporal-orientation opening"
+    return None
 
 
 def _build_anti_pattern_block(state) -> Optional[str]:
@@ -809,6 +848,8 @@ def _build_anti_pattern_block(state) -> Optional[str]:
     recent_openings = state.get("recent_chapter_openings") or []
     base_rules = [
         "Open with action, dialogue, or a direct continuation beat — NOT with weather/atmosphere openings ('The air in X...', 'The morning sun...').",
+        "Do NOT use the syntactic skeleton \"X didn't just Y; (it|they) Z\" (negation-then-amplification). Vary your opening grammar between chapters.",
+        "Do NOT open with a sensory inventory ('smelled of X, tasted of Y, sounded of Z...'). Lead with action, then thread sensory detail through it.",
         "Do NOT pad with returning-to-school / returning-to-base scenes when the player directive sends the OC elsewhere.",
         "Do NOT have the OC 'sense' or 'perceive' meta-knowledge they have no canon basis for (no Shard-aware language, no Entity-language, no Gold-Morning-aware language).",
         "Do NOT cliffhanger on the verge of the directive's primary action. Show it carried out, with consequences.",
@@ -820,9 +861,22 @@ def _build_anti_pattern_block(state) -> Optional[str]:
         lines.append(f"  - {r}")
     if recent_openings:
         lines.append("")
-        lines.append("─── Recent chapter openings — DO NOT start similarly ───")
+        lines.append("─── Recent chapter openings — DO NOT start similarly (text OR syntactic structure) ───")
+        skeletons_seen: set[str] = set()
         for i, o in enumerate(recent_openings, 1):
             lines.append(f"  Ch-{i}: {str(o)[:200]}")
+            sk = _extract_opening_skeleton(str(o))
+            if sk and sk not in skeletons_seen:
+                skeletons_seen.add(sk)
+                lines.append(f"        ↳ syntactic pattern detected: {sk} — DO NOT mirror this structure.")
+        if skeletons_seen:
+            lines.append("")
+            lines.append(
+                "  RULE: opening grammar must differ from each pattern above. If the "
+                "previous chapter opened with [structure-A], this chapter opens with a "
+                "different sentence structure entirely (action verb, dialogue, named "
+                "character moving, internal-state imperative, etc.)."
+            )
     return "\n".join(lines)
 
 
@@ -881,6 +935,69 @@ def _build_chapter_output_reminder_block(current_chapter: int) -> str:
         f"1-2 questions. The PLAYER DIRECTIVE [!!!] block above is the chapter's\n"
         f"primary action — enact it. Do NOT defer it to a cliffhanger.\n"
     )
+
+
+def _build_critical_recap_block(state, current_chapter: int) -> Optional[str]:
+    """END-of-prompt critical recap — leverages the recency half of the
+    U-shape attention curve. The player directive is re-stated here in
+    condensed form, plus the top forbidden concepts and recent opening
+    patterns, so the model's last impression before emitting is "these
+    are the constraints that MUST hold."
+
+    Position this block last (or second-last, just before CHAPTER OUTPUT
+    REMINDER). Duplication with earlier blocks is INTENTIONAL — primacy
+    + recency wins over single-mention.
+    """
+    parts: list[str] = ["[!!!] CRITICAL RECAP — last-checked-before-generation"]
+
+    # 1) Player directive — the single most important signal
+    directive = (state.get("last_user_choice") or "").strip()
+    if directive:
+        # Trim to ~600 chars to keep the recap compact
+        directive_short = directive[:600] + ("…" if len(directive) > 600 else "")
+        parts.append(
+            "\n■ PLAYER DIRECTIVE (must be enacted in ≥60% of this chapter's prose):\n"
+            f"  {directive_short}"
+        )
+
+    # 2) Hard knowledge walls — the absolute "do not mention" set
+    forbidden = state.get("forbidden_concepts") or []
+    kb = state.get("knowledge_boundaries") or {}
+    meta_forbidden = kb.get("meta_knowledge_forbidden") or [] if isinstance(kb, dict) else []
+    walls = list(forbidden) + list(meta_forbidden)
+    if walls:
+        # Show top 8 — beyond that the recap loses signal
+        wall_lines = [f"  ✗ {w}" for w in walls[:8]]
+        parts.append(
+            "\n■ HARD KNOWLEDGE WALLS (the OC cannot mention, think about, "
+            "or vaguely sense these):\n" + "\n".join(wall_lines)
+        )
+
+    # 3) Recent opening patterns to avoid — anti-rut anchor at end
+    recent_openings = state.get("recent_chapter_openings") or []
+    if recent_openings:
+        parts.append("\n■ RECENT OPENINGS — do NOT start similarly:")
+        for o in recent_openings[-3:]:
+            parts.append(f"  • {str(o)[:140]}")
+
+    # 4) Final scene-budget + word-count rule
+    parts.append(
+        f"\n■ LENGTH FLOOR (HARD): prose MUST be at least {_CHAPTER_MIN_WORDS} words.\n"
+        f"  Targets: {_CHAPTER_MIN_WORDS}-{_CHAPTER_MAX_WORDS} words. Aim for the middle of the range.\n"
+        f"  Do NOT 'feel done' once the directive's primary beat lands — keep going:\n"
+        f"  expand into reactions, secondary scenes, character-perspective shifts, the\n"
+        f"  ripple effects across the cast/city. A short chapter is an audit warning."
+    )
+    parts.append(
+        "\n■ SCENE BUDGET: if the directive sends the OC to a new location,\n"
+        "  ≥60% of the chapter's prose must take place there.\n"
+        "  No 'returning to Winslow / school' padding. No cliffhanger on the\n"
+        "  verge of the directive's primary action — show it CARRIED OUT."
+    )
+
+    if len(parts) == 1:  # only the header, no real content
+        return None
+    return "\n".join(parts)
 
 
 def _build_protagonist_framework_block(state) -> Optional[str]:
@@ -960,26 +1077,36 @@ async def _inject_active_character_lore(
     current_chapter = chapter_count
     _tick_pending_consequences(state, current_chapter)
 
-    # Build block list in PRIORITY ORDER (most important first).
-    # Each entry: (label, content_or_None). None entries are skipped at
-    # render time so the final prompt has no empty headers.
+    # Build block list with U-SHAPED ATTENTION layout: critical constraints
+    # appear at BOTH the start (primacy) and end (recency) of the prompt;
+    # reference material in the middle. Models attend most reliably to the
+    # first ~15% and last ~15% of long contexts ("Lost in the Middle"
+    # effect), so we duplicate the directive and the hardest constraints
+    # at both ends. None entries skipped at render time.
     raw_blocks: list[tuple[str, Optional[str]]] = [
+        # ─── PRIMACY ZONE — first impressions, set the constraint scaffold ──
         ("OPERATIONAL CONTRACT",     _build_operational_contract_block(current_chapter)),
         ("STORY UNIVERSE",           _build_story_universe_block(state)),
         ("PROTAGONIST FRAMEWORK",    _build_protagonist_framework_block(state)),
         ("PLAYER DIRECTIVE",         _build_player_directive_block(state)),
         ("ARC CONTEXT",              _build_arc_context_block(state)),
+
+        # ─── MIDDLE — reference material (retrievable, not primary signal) ──
+        ("CHAPTER CONTINUITY",       _build_chapter_continuity_block(state)),
         ("CURRENT SCENE STATE",      _build_current_scene_state_block(state)),
         ("NARRATIVE LEDGER",         _build_narrative_ledger_block(state, current_chapter)),
-        ("CHAPTER CONTINUITY",       _build_chapter_continuity_block(state)),
         ("CHARACTER VOICES",         _build_character_voices_block(state, active_names)),
+        # CAST DOSSIER inserted here at runtime after retrieve_lore
         ("TIMELINE ENFORCEMENT",     _build_timeline_block(state, current_chapter)),
         ("POWER SYSTEM",             _build_power_system_block(state)),
         ("PROTECTED CHARACTERS",     _build_protected_characters_block(state, active_names)),
-        ("KNOWLEDGE BOUNDARIES",     _build_knowledge_boundaries_block(state, active_names)),
         ("STYLE ANCHOR",             _build_style_anchor_block(state)),
-        ("ANTI-PATTERN",             _build_anti_pattern_block(state)),
+
+        # ─── RECENCY ZONE — last-checked-before-generation hard constraints ─
+        ("KNOWLEDGE BOUNDARIES",     _build_knowledge_boundaries_block(state, active_names)),
         ("AUDIT FEEDBACK",           _build_audit_feedback_block(state)),
+        ("ANTI-PATTERN",             _build_anti_pattern_block(state)),
+        ("CRITICAL RECAP",           _build_critical_recap_block(state, current_chapter)),
         ("CHAPTER OUTPUT REMINDER",  _build_chapter_output_reminder_block(current_chapter)),
     ]
 

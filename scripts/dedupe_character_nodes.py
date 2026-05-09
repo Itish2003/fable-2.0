@@ -22,6 +22,11 @@ Idempotent: re-running on a deduped DB is a no-op.
 Usage:
     uv run python scripts/dedupe_character_nodes.py             # dry-run
     uv run python scripts/dedupe_character_nodes.py --apply
+
+WARNING: STOP THE FABLE AGENT before running with --apply. The session
+canonicalisation step walks every session and writes back state via raw
+SQL UPDATE. A concurrent storyteller/archivist write would last-write-
+wins on the entire jsonb blob.
 """
 
 from __future__ import annotations

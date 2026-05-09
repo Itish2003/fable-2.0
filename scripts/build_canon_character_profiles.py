@@ -26,6 +26,12 @@ Usage:
     uv run python scripts/build_canon_character_profiles.py             # dry-run
     uv run python scripts/build_canon_character_profiles.py --apply
     uv run python scripts/build_canon_character_profiles.py --apply --limit 5 --char "Mari Watanabe"
+
+WARNING: STOP THE FABLE AGENT before running with --apply. This script
+walks every session and writes back state.character_voices via raw SQL.
+A concurrent storyteller/archivist write to the same session.state would
+last-write-wins and silently overwrite. The script is otherwise
+idempotent and safe.
 """
 
 from __future__ import annotations
@@ -174,7 +180,21 @@ async def _build_profile(client, character_name: str, chunks: list[str]) -> Opti
                 max_output_tokens=2048,
             ),
         )
-        return CanonProfile.model_validate_json(resp.text or "{}")
+        # Guard against empty/junk responses: a CanonProfile with all empty
+        # defaults would persist as a "profiled" record on re-run. Require
+        # the two highest-signal fields to be non-empty before accepting.
+        text = (resp.text or "").strip()
+        if not text:
+            logger.warning("profile build returned empty text for %r; skipping", character_name)
+            return None
+        profile = CanonProfile.model_validate_json(text)
+        if not profile.personality.strip() or not profile.speech_patterns.strip():
+            logger.warning(
+                "profile build for %r returned no personality/speech_patterns; skipping",
+                character_name,
+            )
+            return None
+        return profile
     except Exception as e:
         logger.warning("profile build failed for %r: %s", character_name, e)
         return None

@@ -128,12 +128,14 @@ Now emit a CanonProfile JSON capturing "{character_name}"'s canonical voice. Rem
 async def _profileable_characters(db) -> list[tuple[int, str, int]]:
     """Return [(node_id, canonical_name, chunk_count), ...] for characters
     with >= MIN_CHUNKS linked canon chunks, sorted by chunk_count desc."""
+    # Counts per character of CANONICAL chunks only (universe IN known canon
+    # universes -- excludes archivist_runtime + crossover-label noise).
     rows = (await db.execute(text(f"""
         SELECT n.id, n.name, count(*) as n_chunks
         FROM lore_nodes n
         JOIN lore_embeddings e ON e.node_id = n.id
         WHERE n.node_type = 'character'
-          AND e.volume LIKE 'Volume %'
+          AND e.universe IN ('mahouka', 'worm')
         GROUP BY n.id, n.name
         HAVING count(*) >= {MIN_CHUNKS}
         ORDER BY n_chunks DESC
@@ -148,7 +150,7 @@ async def _fetch_chunks(db, node_id: int, limit: int) -> list[str]:
     rows = (await db.execute(text(f"""
         SELECT chunk_text
         FROM lore_embeddings
-        WHERE node_id = :nid AND volume LIKE 'Volume %'
+        WHERE node_id = :nid AND universe IN ('mahouka', 'worm')
         ORDER BY char_length(chunk_text) DESC
         LIMIT {limit}
     """), {"nid": node_id})).all()

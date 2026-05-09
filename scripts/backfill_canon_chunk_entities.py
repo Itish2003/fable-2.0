@@ -108,13 +108,15 @@ async def main(apply: bool, limit: int | None) -> None:
         existing_map = await _build_existing_node_map(db)
         logger.info("loaded %d existing canonical -> node_id mappings", len(existing_map))
 
-        # Pull all unlinked canon chunks (volume LIKE 'Volume %' is the
-        # canonical-corpus marker; archivist_runtime / chapter_summaries
-        # have node_ids already so we skip them implicitly via node_id NULL).
+        # Pull all unlinked canon chunks. We exclude runtime-emitted
+        # volumes (archivist_runtime / chapter_summaries / storyteller_runtime
+        # / etc) and accept any chunk from a known canonical universe. The
+        # universe column is the most reliable filter since Mahouka volumes
+        # are tagged "Volume XX" and Worm volumes are tagged "Arc XX".
         stmt = (
             select(LoreEmbedding.id, LoreEmbedding.chunk_text)
             .where(LoreEmbedding.node_id.is_(None))
-            .where(LoreEmbedding.volume.like("Volume %"))
+            .where(LoreEmbedding.universe.in_(["mahouka", "worm"]))
         )
         if limit is not None:
             stmt = stmt.limit(limit)

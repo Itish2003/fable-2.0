@@ -89,7 +89,14 @@ def _build_state_update_payload(state: dict) -> dict:
 
 
 async def _emit_state_update(session_id: str, user_id: str) -> None:
-    """Fetch the latest session state and push a `state_update` frame."""
+    """Fetch the latest session state and push a `state_update` frame.
+
+    Also looks up the most recent committed invocation_id from the events
+    table and tacks it onto the payload as `last_invocation_id` so the
+    frontend can seed its in-memory `invocationHistory` after a reload --
+    otherwise the Undo / Rewrite buttons stay hidden until the user
+    generates at least one chapter post-reload.
+    """
     try:
         session = await fable_runner.session_service.get_session(
             app_name=fable_runner.app_name,
@@ -97,6 +104,39 @@ async def _emit_state_update(session_id: str, user_id: str) -> None:
             session_id=session_id,
         )
         payload = _build_state_update_payload(session.state if session else {})
+
+        # Look up the most-recent invocation_id for this session so the
+        # frontend can hydrate Undo/Rewrite history. We use the same
+        # async DB engine that backs sessions -- no new connection.
+        try:
+            from sqlalchemy import text
+            from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+            import os
+            db_url = os.getenv(
+                "DATABASE_URL",
+                "postgresql+asyncpg://itish@localhost/fable2_0",
+            )
+            engine = create_async_engine(db_url, echo=False)
+            SM = async_sessionmaker(engine, expire_on_commit=False)
+            async with SM() as db:
+                row = (await db.execute(text("""
+                    SELECT invocation_id FROM events
+                    WHERE session_id = :sid
+                      AND invocation_id IS NOT NULL
+                      AND invocation_id != ''
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """), {"sid": session_id})).first()
+            await engine.dispose()
+            if row and row[0]:
+                payload["last_invocation_id"] = row[0]
+        except Exception:
+            logger.exception(
+                "state_update: failed to look up last invocation_id for %s",
+                session_id,
+            )
+            # Fall through -- the rest of the payload is still useful.
+
         await manager.send_personal_message(
             {"type": "state_update", "data": payload},
             session_id,

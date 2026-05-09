@@ -59,6 +59,11 @@ export type StoryStateData = {
   location: string;
   mood: string;
   chapter: number;
+  // Server-supplied seed for the in-memory invocationHistory used by
+  // Undo/Rewrite. Lets us hydrate Undo/Rewrite buttons immediately on
+  // page reload for any session with prior committed turns instead of
+  // requiring the user to generate another chapter first.
+  last_invocation_id?: string;
 };
 
 // ProseFragment kept as a TYPE export for callers that import it (e.g.
@@ -250,6 +255,18 @@ export function useStory(sessionId: string | null, isResumed: boolean = false) {
 
         case 'state_update':
           setStoryState(data.data);
+          // Hydrate Undo / Rewrite history if the server supplied a
+          // last_invocation_id and our in-memory history is empty
+          // (i.e. fresh page load on a session that already has
+          // committed turns). Without this the buttons would stay
+          // hidden until the user generated at least one chapter
+          // post-reload, which forces a wasteful "warm-up" turn.
+          if (data.data.last_invocation_id) {
+            const seed = data.data.last_invocation_id;
+            setInvocationHistory((prev) =>
+              prev.length === 0 ? [seed] : prev,
+            );
+          }
           break;
 
         case 'chapter_meta': {

@@ -32,10 +32,30 @@ logger = logging.getLogger("fable.tools.lore_lookup")
 
 TOP_K = 3
 
+# Cosine-distance ceiling for retrieve_lore. pgvector's cosine_distance is
+# 1 - cosine_similarity for normalised vectors, so MAX_DISTANCE = 0.4 means
+# "keep only matches with cosine_similarity >= 0.6". Without this filter,
+# a query for an unknown entity (e.g. "Saegusa Mayumi" before B1 backfill)
+# returns the nearest neighbour regardless of how poor the match is -- the
+# model trusts the function-call result and gets misled by junk. Returning
+# `[]` for below-threshold queries lets the model fall back to its training.
+MAX_DISTANCE = 0.4
+
+# Minimum chunk_text length to be considered a "substantive" retrieval result.
+# Empirically, the Ollama embedding model produces vectors for short text
+# (e.g. archivist_runtime shells like "Shiba Miyuki {}") that cluster at
+# unnaturally low cosine distance (~0.111) to any query, regardless of
+# semantic relevance. These shells outrank legitimate Vol XX canon chunks
+# (~0.37 distance for genuine matches) and dominate retrieval. Enforcing a
+# minimum length filters these out -- canon chunks are 200-500+ chars and
+# easily pass; runtime shells are ~16 chars and fail. Adjust upward if even
+# longer noise patterns emerge.
+MIN_CHUNK_LENGTH = 60
+
 
 async def retrieve_lore(entity: str) -> list[dict]:
     """Vector-search the LoreEmbedding store for ``entity`` and return up to
-    :data:`TOP_K` matches as JSON-serializable dicts.
+    :data:`TOP_K` matches whose cosine_distance is below :data:`MAX_DISTANCE`.
 
     Each match has shape::
 
@@ -47,7 +67,8 @@ async def retrieve_lore(entity: str) -> list[dict]:
             "attributes": dict,
         }
 
-    Returns ``[]`` if embedding fails or no rows match.
+    Returns ``[]`` if embedding fails, no rows match, or all returned rows
+    are below the similarity threshold.
     """
     safe_entity = sanitize_context(entity)
     if not safe_entity:
@@ -59,29 +80,48 @@ async def retrieve_lore(entity: str) -> list[dict]:
         logger.warning("retrieve_lore: embedding failed for %r: %s", safe_entity, e)
         return []
 
+    distance_expr = LoreEmbedding.embedding.cosine_distance(query_vector)
     async with AsyncSessionLocal() as session:
+        # Over-fetch (4x TOP_K) so we still hit TOP_K substantive matches
+        # after filtering out noise shells whose embedding artifact ranks
+        # them top regardless of similarity.
         stmt = (
-            select(LoreEmbedding)
+            select(LoreEmbedding, distance_expr.label("distance"))
             .options(selectinload(LoreEmbedding.node))
-            .order_by(LoreEmbedding.embedding.cosine_distance(query_vector))
-            .limit(TOP_K)
+            .order_by(distance_expr)
+            .limit(TOP_K * 4)
         )
         result = await session.execute(stmt)
-        embeddings = result.scalars().all()
+        rows = result.all()
 
     matches: list[dict] = []
-    for emb in embeddings:
+    skipped_distance = 0
+    skipped_short = 0
+    for emb, distance in rows:
+        if distance is not None and distance > MAX_DISTANCE:
+            skipped_distance += 1
+            continue
+        chunk = emb.chunk_text or ""
+        if len(chunk) < MIN_CHUNK_LENGTH:
+            skipped_short += 1
+            continue
         node = emb.node
         matches.append(
             {
-                "chunk_text": emb.chunk_text,
+                "chunk_text": chunk,
                 "volume": emb.volume,
                 "node_name": node.name if node else None,
                 "node_type": node.node_type if node else None,
                 "attributes": dict(node.attributes or {}) if node else {},
             }
         )
-
+        if len(matches) >= TOP_K:
+            break
+    if skipped_distance or skipped_short:
+        logger.info(
+            "retrieve_lore(%r): scanned %d, skipped %d above MAX_DISTANCE=%.2f, %d below MIN_CHUNK_LENGTH=%d, returning %d",
+            safe_entity, len(rows), skipped_distance, MAX_DISTANCE, skipped_short, MIN_CHUNK_LENGTH, len(matches),
+        )
     return matches
 
 

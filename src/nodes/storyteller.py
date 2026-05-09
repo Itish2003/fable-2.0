@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from google.adk.agents.callback_context import CallbackContext
@@ -255,8 +256,41 @@ def _tier_marker(tier) -> str:
     }.get(str(val), "[!]")
 
 
+_YEAR_RE = re.compile(r"\b(\d{4})\b")
+
+
+def _extract_year(date_str) -> Optional[int]:
+    """Pull the first 4-digit year from a free-form in-world date string.
+
+    Handles every shape we've seen in practice:
+      - "April 2095"
+      - "October 2018 (Contextual)"
+      - "2095-04-18 Evening"
+    Returns None when no year is present.
+    """
+    if not date_str:
+        return None
+    m = _YEAR_RE.search(str(date_str))
+    return int(m.group(1)) if m else None
+
+
+# Events whose in-world date is more than this many years from the story's
+# current_timeline_date are demoted from MANDATORY/HIGH/MEDIUM markers to
+# a "[context]" backstory framing. Without this filter, a story set in
+# 2095 (Mahouka) had JJK 2017-2018 events flagged MANDATORY -- the model
+# was being told 77-year-old historical events were required chapter beats.
+_TIMELINE_PROXIMITY_YEARS = 5
+
+
 def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
-    """Build TIMELINE ENFORCEMENT block from state.canon_timeline.events."""
+    """Build TIMELINE ENFORCEMENT block from state.canon_timeline.events.
+
+    Events get a priority marker derived from their `tier` field. Events
+    whose `in_world_date` is far from the story's `current_timeline_date`
+    (more than _TIMELINE_PROXIMITY_YEARS in either direction) are re-tagged
+    `[context]` regardless of tier -- they're backstory the world is built
+    on, not chapter beats to advance.
+    """
     timeline = state.get("canon_timeline") or {}
     events = timeline.get("events") if isinstance(timeline, dict) else None
     if not events:
@@ -267,9 +301,28 @@ def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
         return None
     upcoming.sort(key=lambda e: int(e.get("pressure_score", 0)), reverse=True)
 
+    # Anchor: the story's current in-world year. Falls back to the premise
+    # text if current_timeline_date is unset (early chapters before any
+    # time advance has been recorded).
+    current_year = (
+        _extract_year(state.get("current_timeline_date"))
+        or _extract_year(state.get("story_premise") or "")
+    )
+
+    has_context_demotion = False
     lines = []
     for ev in upcoming[:12]:
-        marker = _tier_marker(ev.get("tier", "medium"))
+        ev_year = _extract_year(ev.get("in_world_date"))
+        is_far_in_time = (
+            current_year is not None
+            and ev_year is not None
+            and abs(current_year - ev_year) > _TIMELINE_PROXIMITY_YEARS
+        )
+        if is_far_in_time:
+            marker = "[context]"
+            has_context_demotion = True
+        else:
+            marker = _tier_marker(ev.get("tier", "medium"))
         name = ev.get("name", "(unnamed event)")
         date = ev.get("in_world_date", "")
         date_part = f" — {date}" if date else ""
@@ -278,25 +331,51 @@ def _build_timeline_block(state, current_chapter: int) -> Optional[str]:
         if playbook:
             lines.append(f"  · {playbook}")
 
+    rules = (
+        "Rules: [!!!] MANDATORY events MUST appear in this chapter. "
+        "[!!] HIGH events should be foreshadowed or prepared. "
+        "[!] MEDIUM events may be woven in when narratively appropriate. "
+        "After playing out an event, the archivist will retire it via "
+        "canon_event_status_updates."
+    )
+    if has_context_demotion:
+        rules += (
+            " [context] events are historical backstory (>5 years from "
+            "the current in-world date); reference for tone or causation "
+            "but do NOT treat as a chapter beat."
+        )
+
     return (
         "TIMELINE ENFORCEMENT — upcoming canon events the chapter must engage with:\n\n"
         + "\n".join(lines)
-        + "\n\nRules: [!!!] MANDATORY events MUST appear in this chapter. "
-          "[!!] HIGH events should be foreshadowed or prepared. "
-          "[!] MEDIUM events may be woven in when narratively appropriate. "
-          "After playing out an event, the archivist will retire it via "
-          "canon_event_status_updates."
+        + "\n\n"
+        + rules
     )
 
 
 def _build_character_voices_block(state, active_names: list[str]) -> Optional[str]:
+    """Build the CHARACTER VOICES block.
+
+    For active characters with a voice profile in state.character_voices,
+    render the canonical voice constraints. For active characters WITHOUT
+    a voice profile, emit an explicit placeholder telling the model to
+    defer to canon characterisation -- without this placeholder, the
+    character was silently omitted and the model wrote their dialogue
+    freestyle from training data with no canonical anchor.
+    """
     voices = state.get("character_voices") or {}
-    if not voices:
+    if not active_names:
         return None
     blocks = []
     for name in active_names:
         v = voices.get(name)
         if not v:
+            blocks.append(
+                f"**{name}**\n"
+                f"  - (voice profile not yet seeded — defer to your canonical "
+                f"knowledge of this character; the archivist will capture "
+                f"their voice profile after they speak in this chapter)"
+            )
             continue
         bullet = []
         if v.get("speech_patterns"): bullet.append(f"  - speech: {v['speech_patterns']}")

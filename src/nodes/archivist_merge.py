@@ -23,6 +23,7 @@ from google.adk.workflow import node
 from src.database import AsyncSessionLocal
 from src.services.embedding_service import get_embedding
 from src.state.lore_models import LoreEdge, LoreEmbedding, LoreNode
+from src.utils.canon_aliases import resolve_alias
 from src.utils.sanitizer import sanitize_context
 
 logger = logging.getLogger("fable.archivist_merge")
@@ -101,9 +102,21 @@ async def _persist_lore_commits(state, lore_commits: list[dict]) -> None:
     fallback_universe = universes[0] if universes else "unknown"
     for entry in lore_commits:
         try:
-            entity_name = sanitize_context(entry.get("entity_name") or "")
-            if not entity_name:
+            raw_entity_name = sanitize_context(entry.get("entity_name") or "")
+            if not raw_entity_name:
                 continue
+            # Canonicalise via alias dict so future runs don't re-create
+            # duplicates. resolve_alias("Shiba Tatsuya") -> "Tatsuya Shiba"
+            # for any known canon character; falls through to raw name for
+            # OC/custom entities that aren't in the alias dict (Kageaki Ren,
+            # The Masked Figure, etc.). The Phase C dedupe collapsed the
+            # historical duplicates; this prevents re-introducing them.
+            entity_name = resolve_alias(raw_entity_name) or raw_entity_name
+            if entity_name != raw_entity_name:
+                logger.info(
+                    "lore_commit: canonicalised entity_name %r -> %r",
+                    raw_entity_name, entity_name,
+                )
             node_type = entry.get("node_type") or "character"
             universe = entry.get("universe") or fallback_universe
             # attributes is now list[{key, value}] on the wire (was dict[str, X]
@@ -170,9 +183,13 @@ async def archivist_merge(
     edge_writes: list[tuple[str, int, str]] = []
     for raw_upd in (delta.get("character_updates") or []):
         upd = dict(raw_upd or {})
-        name = sanitize_context(upd.get("character_name") or "")
-        if not name:
+        raw_name = sanitize_context(upd.get("character_name") or "")
+        if not raw_name:
             continue
+        # Canonicalise so state.active_characters keys stay deduped.
+        # Falls through to raw name for OC/custom characters not in the
+        # alias dict.
+        name = resolve_alias(raw_name) or raw_name
         cur = dict(actives.get(name) or {})
         # Initialize defaults on first sighting (mirrors update_relationship)
         cur.setdefault("trust_level", 0)
@@ -202,9 +219,14 @@ async def archivist_merge(
     voices = dict(ctx.state.get("character_voices") or {})
     for raw_vu in (delta.get("voice_updates") or []):
         vu = dict(raw_vu or {})
-        name = sanitize_context(vu.get("character_name") or "")
-        if not name:
+        raw_name = sanitize_context(vu.get("character_name") or "")
+        if not raw_name:
             continue
+        # Canonicalise so state.character_voices keys match the storyteller's
+        # voice block lookup. Pre-Phase-C, "Shiba Miyuki" and "Miyuki Shiba"
+        # could each have voice profiles; only the second was reachable from
+        # the storyteller's active_names list.
+        name = resolve_alias(raw_name) or raw_name
         cur = dict(voices.get(name) or {})
         if vu.get("speech_patterns"):
             cur["speech_patterns"] = sanitize_context(vu["speech_patterns"])

@@ -471,11 +471,7 @@ async def execute_adk_turn(
         # Cross-instance liveness: the socket a visitor is holding open may
         # live on a different instance than this turn ran on (e.g. this
         # turn was triggered by a demo tool call from the A2A agent).
-        # Deferred import: notify_bridge imports ws.runner (this module) to
-        # call emit_resume_snapshot, so importing it at module load time
-        # here would be circular.
-        from src.ws.notify_bridge import notify_change
-        await notify_change(session_id, "turn")
+        await _notify_after_turn(session_id, "turn")
 
     except asyncio.CancelledError:
         # Never swallow cancellation — it's how rewinds / disconnects abort
@@ -488,9 +484,19 @@ async def execute_adk_turn(
             "kind": "timeout",
             "message": "A weave step timed out. Please try again.",
         }, session_id)
+        await _notify_after_turn(session_id, "turn_error")
     except Exception:
         logger.exception("Error during ADK turn execution")
         await manager.send_personal_message({
             "type": "error",
             "message": "The narrative weave destabilized. Please try again.",
         }, session_id)
+        await _notify_after_turn(session_id, "turn_error")
+
+
+async def _notify_after_turn(session_id: str, kind: str) -> None:
+    # Deferred import: notify_bridge imports ws.runner (this module) to call
+    # emit_resume_snapshot, so importing it at module load time here would
+    # be circular.
+    from src.ws.notify_bridge import notify_change
+    await notify_change(session_id, kind)

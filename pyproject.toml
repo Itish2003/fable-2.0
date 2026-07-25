@@ -9,6 +9,7 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "fastapi>=0.136.1",
     "google-adk==2.0.0b1",
+    "greenlet>=3.2.4",
     "httpx>=0.28.1",
     "networkx>=3.6.1",
     "ollama>=0.6.2",
@@ -20,3 +21,10 @@ dependencies = [
     "sqlalchemy-utils>=0.42.1",
     "uvicorn>=0.46.0",
 ]
+
+# Vercel's Python runtime auto-detects an "app" variable in main.py/app.py/
+# index.py under src/, app/, or api/ -- but this repo also has frontend/
+# with its own package.json, so pin the entrypoint explicitly rather than
+# rely on detection picking the right one.
+[tool.vercel]
+entrypoint = "src.main:app"

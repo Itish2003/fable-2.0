@@ -208,13 +208,35 @@ TOOLS = [
 ]
 
 ENGINE_ORIGIN = os.getenv("ENGINE_ORIGIN", "http://127.0.0.1:8001")
+# Serverless platforms (Vercel) invoke the ASGI app in-process -- there is no
+# loopback listener for the grounding tools to reach over real HTTP.
+# ENGINE_TRANSPORT=asgi routes straight into the same app object via
+# httpx.ASGITransport instead of a socket. VERCEL is set automatically by
+# Vercel's build and runtime, so it's a sane default; the explicit var lets
+# any future serverless host (or a compose test of this path) opt in without
+# touching ENGINE_ORIGIN's meaning.
+ENGINE_TRANSPORT = os.getenv("ENGINE_TRANSPORT", "asgi" if os.getenv("VERCEL") else "http")
+
+
+def _engine_client(timeout: float) -> httpx.AsyncClient:
+    if ENGINE_TRANSPORT == "asgi":
+        # Deferred import: src/main.py imports this module to mount the
+        # router, so importing src.main at module load time here would be
+        # circular. By the time a tool actually runs, src.main has finished
+        # importing and `app` exists in sys.modules.
+        from src.main import app as engine_app
+
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=engine_app), base_url="http://engine", timeout=timeout
+        )
+    return httpx.AsyncClient(base_url=ENGINE_ORIGIN, timeout=timeout)
 
 
 async def _tool_engine_status(args: dict[str, Any]) -> dict[str, Any]:
     del args  # takes no parameters; kept for uniform TOOL_IMPLS dispatch
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
-            res = await client.get(f"{ENGINE_ORIGIN}/openapi.json")
+        async with _engine_client(4.0) as client:
+            res = await client.get("/openapi.json")
         if res.status_code != 200:
             return {"live": False, "note": f"engine answered HTTP {res.status_code}"}
         spec = res.json()
@@ -236,8 +258,8 @@ async def _tool_engine_status(args: dict[str, Any]) -> dict[str, Any]:
 async def _tool_list_stories(args: dict[str, Any]) -> dict[str, Any]:
     user_id = args.get("user_id") or "local_tester"
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            res = await client.get(f"{ENGINE_ORIGIN}/stories/{user_id}")
+        async with _engine_client(6.0) as client:
+            res = await client.get(f"/stories/{user_id}")
         if res.status_code != 200:
             return {"live": False, "note": f"engine answered HTTP {res.status_code}"}
         body = res.json()

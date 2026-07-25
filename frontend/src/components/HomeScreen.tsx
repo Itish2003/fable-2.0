@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, MapPin, Sparkles, Plus, Clock, ChevronRight, Loader2, Wind, Trash2 } from 'lucide-react';
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8001';
+// No build-time override (production build, same-origin deploy): relative
+// paths resolve against whatever origin serves this bundle.
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 
 type StoryCard = {
   session_id: string;

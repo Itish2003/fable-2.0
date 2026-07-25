@@ -2,9 +2,11 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.database import init_db
@@ -42,6 +44,18 @@ app.add_middleware(
 # fable-2.0's real A2A project agent: /.well-known/agent-card.json + /a2a,
 # in-process (same uvicorn worker, same event loop as the engine above).
 app.include_router(a2a_router)
+
+# The project's own frontend (frontend/dist, a Vite build with base=/demo/),
+# served same-origin so the card's live-demo extension (a2a_agent.py) can
+# point at this engine's own address instead of a separate origin. Guarded:
+# absent in environments that don't ship the frontend build (e.g. a stripped
+# test image), the engine still boots fine without it.
+_frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/demo", StaticFiles(directory=_frontend_dist, html=True), name="demo")
+    logger.info("Serving frontend demo from %s at /demo", _frontend_dist)
+else:
+    logger.warning("frontend/dist not found at %s -- /demo will 404", _frontend_dist)
 
 class CreateStoryRequest(BaseModel):
     user_id: str = "local_tester" # Match frontend string

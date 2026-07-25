@@ -30,7 +30,9 @@ logger = logging.getLogger("fable.a2a_agent")
 STATIC_DIR = Path(__file__).parent / "static"
 
 A2A_BASE_URL = os.getenv("A2A_BASE_URL", "http://localhost:8001")
-DEMO_URL = os.getenv("DEMO_URL", "http://localhost:5173")
+# Same origin as the engine now (src/main.py mounts frontend/dist at /demo)
+# instead of the separate `vite dev` origin the experiment card pointed at.
+DEMO_URL = os.getenv("DEMO_URL", f"{A2A_BASE_URL}/demo/")
 
 CARD: dict[str, Any] = {
     "name": "fable-2.0",

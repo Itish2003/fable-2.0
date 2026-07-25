@@ -4,7 +4,9 @@ import SetupWizard from './components/SetupWizard';
 import HomeScreen from './components/HomeScreen';
 import { useStory } from './hooks/useStory';
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8001';
+// No build-time override (production build, same-origin deploy): relative
+// paths resolve against whatever origin serves this bundle.
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
 
 type SelectedSession = { id: string; isResumed: boolean };
 

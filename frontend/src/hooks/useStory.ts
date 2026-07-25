@@ -1,7 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8001';
-const WS_BASE = (import.meta.env.VITE_WS_BASE as string | undefined) ?? 'ws://localhost:8001/ws/story';
+// No build-time override (production build, same-origin deploy): relative
+// paths resolve against whatever origin serves this bundle. WebSocket URLs
+// can't be relative, so derive ws(s)://<this origin>/ws/story at runtime
+// instead of baking in a host that's only correct for one deploy target.
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '';
+const WS_BASE =
+  (import.meta.env.VITE_WS_BASE as string | undefined) ??
+  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/story`;
 
 export type RequestInputData = {
   interrupt_id: string;

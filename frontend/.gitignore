@@ -8,7 +8,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist is committed deliberately: src/main.py's StaticFiles mount (/demo)
+# serves it same-origin, and Vercel's Python build doesn't run an npm build
+# step for it. Rebuild with `npx vite build` (base=/demo/ in production
+# mode, per vite.config.ts) and commit whenever frontend/src changes.
 dist-ssr
 *.local
 

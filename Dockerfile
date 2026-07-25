@@ -13,6 +13,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv pip install --system --no-cache -r pyproject.toml
 
 COPY src ./src
+COPY frontend/dist ./frontend/dist
 
 EXPOSE 8001
 

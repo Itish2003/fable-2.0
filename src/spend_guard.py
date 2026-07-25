@@ -20,9 +20,10 @@ the one that prepared it.
 import logging
 import os
 from typing import NamedTuple
-from urllib.parse import parse_qsl, urlsplit
 
 import asyncpg
+
+from src.db_url import bare_asyncpg_dsn
 
 logger = logging.getLogger("fable.spend_guard")
 
@@ -38,15 +39,8 @@ _schema_ready = False
 
 
 def _ledger_dsn() -> tuple[str, dict]:
-    raw = os.environ["MEMORY_DATABASE_URL"]
-    parts = urlsplit(raw)
-    query = dict(parse_qsl(parts.query))
-    ssl = "require" if query.get("sslmode") else None
-    scheme = "postgresql" if parts.scheme in ("postgresql", "postgres") else parts.scheme
-    dsn = f"{scheme}://{parts.netloc}{parts.path}"
-    connect_kwargs: dict = {"statement_cache_size": 0}
-    if ssl:
-        connect_kwargs["ssl"] = ssl
+    dsn, connect_kwargs = bare_asyncpg_dsn(os.environ["MEMORY_DATABASE_URL"])
+    connect_kwargs["statement_cache_size"] = 0
     return dsn, connect_kwargs
 
 

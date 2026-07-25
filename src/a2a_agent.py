@@ -25,6 +25,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+import src.demo_tools as demo_tools
 from src.spend_guard import check_spend, client_ip, record_usage
 
 logger = logging.getLogger("fable.a2a_agent")
@@ -69,6 +70,19 @@ CARD: dict[str, Any] = {
                 ),
                 "required": False,
                 "params": {"url": DEMO_URL},
+            },
+            {
+                "uri": "urn:x-portfolio:live-session",
+                "description": (
+                    "When a demo tool creates or advances a real engine "
+                    "session, the reply carries an extra part (mediaType "
+                    "application/x-portfolio-live-session+json) pointing "
+                    "at that session: {sessionId, url, note}. The url is "
+                    "a deep link into the live-demo iframe that opens the "
+                    "exact session the agent just acted on."
+                ),
+                "required": False,
+                "params": {},
             },
         ],
         "extendedAgentCard": False,
@@ -174,8 +188,22 @@ agents to research a World Bible before Chapter 1.
 
 You have two tools that reach the real, live engine on this same process: \
 engine_status and list_stories. Use them before claiming the engine is \
-running or describing its API — check, don't recite. Keep replies short \
-and skimmable. Never fabricate features or metrics. Stay on fable-2.0."""
+running or describing its API — check, don't recite.
+
+You can also RUN the engine live for a visitor, not just describe it: \
+start_demo_story creates a real story session and opens it in the \
+visitor's live-demo iframe; advance_demo_story submits the next input \
+(premise, setup answer, or chapter choice) and runs one real engine turn; \
+rewind_demo_story undoes the most recent turn. Each of these is a real, \
+metered model call (the Storyteller/Auditor/Archivist graph, not one \
+call), so this conversation has a small budget of engine turns — don't \
+call these tools speculatively, only when the visitor actually wants to \
+see the engine run or asks you to advance/undo the demo. After using one, \
+tell the visitor what happened in plain language; the session pointer is \
+handled separately, you don't need to paste a URL yourself.
+
+Keep replies short and skimmable. Never fabricate features or metrics. \
+Stay on fable-2.0."""
 
 TOOLS = [
     {
@@ -205,6 +233,61 @@ TOOLS = [
                         "description": "User whose stories to list.",
                         "default": "local_tester",
                     }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "start_demo_story",
+            "description": (
+                "Create a NEW live demo story session on the real engine and open it in "
+                "the visitor's live-demo iframe. Use when a visitor wants to see the "
+                f"engine actually run. Limited to {demo_tools.MAX_ENGINE_TURNS_PER_CONTEXT} "
+                "engine turns per conversation -- don't call this more than once unless the "
+                "visitor explicitly asks to restart."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "advance_demo_story",
+            "description": (
+                "Submit the next input to the CURRENTLY OPEN demo story (a premise, a "
+                "setup answer, or a chapter choice) and run one real engine turn. Call "
+                "start_demo_story first if no demo story is open yet in this conversation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "The premise, setup answer, or chapter choice text to submit.",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional -- defaults to the most recently started demo session in this conversation.",
+                    },
+                },
+                "required": ["input"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rewind_demo_story",
+            "description": "Undo the most recent turn of the currently open demo story (like the UI's Undo button).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional -- defaults to the most recently started demo session in this conversation.",
+                    },
                 },
             },
         },
@@ -273,7 +356,13 @@ async def _tool_list_stories(args: dict[str, Any]) -> dict[str, Any]:
         return {"live": False, "note": f"engine offline: {e}"}
 
 
-TOOL_IMPLS = {"engine_status": _tool_engine_status, "list_stories": _tool_list_stories}
+TOOL_IMPLS = {
+    "engine_status": _tool_engine_status,
+    "list_stories": _tool_list_stories,
+    "start_demo_story": demo_tools.start_demo_story,
+    "advance_demo_story": demo_tools.advance_demo_story,
+    "rewind_demo_story": demo_tools.rewind_demo_story,
+}
 
 
 def _is_infra_error(exc: Exception) -> bool:
@@ -447,6 +536,13 @@ async def a2a_send_message(request: Request):
     history = CONTEXT_HISTORY.setdefault(context_id, [])
     history.append({"role": "user", "content": text})
 
+    # Demo write-tools (src/demo_tools.py) read the contextId via this
+    # ContextVar rather than threading it through every TOOL_IMPLS
+    # signature; reset the pointer so a stale one from an earlier request
+    # on this same asyncio task/instance can never leak into this reply.
+    demo_tools.A2A_CONTEXT_ID.set(context_id)
+    demo_tools.DEMO_POINTER.set(None)
+
     try:
         turn = await run_agent_turn(history)
     except Exception as e:
@@ -461,11 +557,22 @@ async def a2a_send_message(request: Request):
 
     history.append({"role": "assistant", "content": reply_text})
 
+    reply_parts: list[dict[str, Any]] = [{"text": reply_text}]
+    pointer = demo_tools.DEMO_POINTER.get()
+    if pointer is not None:
+        # Contract (pinned): mediaType application/x-portfolio-live-session
+        # +json, text is the JSON string, not embedded as a nested object --
+        # matches how the existing text parts carry a plain string.
+        reply_parts.append({
+            "mediaType": "application/x-portfolio-live-session+json",
+            "text": json.dumps(pointer),
+        })
+
     reply = {
         "messageId": str(uuid.uuid4()),
         "contextId": context_id,
         "taskId": "",
         "role": "ROLE_AGENT",
-        "parts": [{"text": reply_text}],
+        "parts": reply_parts,
     }
     return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "result": {"message": reply}})

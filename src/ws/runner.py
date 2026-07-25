@@ -187,6 +187,115 @@ async def _emit_chapter_meta(session_id: str, user_id: str) -> None:
         logger.exception("Failed to emit chapter_meta for session %s", session_id)
 
 
+async def emit_resume_snapshot(session_id: str, user_id: str = "local_tester", existing=None) -> None:
+    """Push the WS frames a resuming/reconnecting client needs to repaint
+    without a fresh engine turn: current state, the last chapter (if one is
+    waiting on a choice), and any genuinely-pending HITL request_input.
+
+    Extracted from the WS-connect resume path (formerly inline in
+    src/main.py's story_websocket) so the cross-instance NOTIFY bridge
+    (src/ws/notify_bridge.py) can reuse the exact same DB-state rebuild:
+    a demo tool's engine action may run on a DIFFERENT Vercel instance than
+    the one holding the visitor's socket, so that instance re-derives what
+    to push from Postgres rather than receiving the state directly.
+    """
+    if existing is None:
+        try:
+            existing = await fable_runner.session_service.get_session(
+                app_name=fable_runner.app_name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        except Exception:
+            existing = None
+    if existing is None:
+        return
+
+    # Push current state so the sidebar populates immediately.
+    await _emit_state_update(session_id=session_id, user_id=user_id)
+
+    # Re-emit the most recent chapter as a single chapter_meta frame
+    # containing prose + choices + questions. Two cases this covers:
+    #   (a) Player reloaded mid-game with a chapter waiting for their
+    #       choice. Without this, the chapter would be blank on F5.
+    #   (b) Previous workflow crashed mid-archivist before
+    #       runner._emit_chapter_meta could fire. The auditor had already
+    #       written state.last_chapter_meta and storyteller_merge had
+    #       written state.last_story_text so the data exists -- just never
+    #       reached the WS.
+    # Skipped when the user has already submitted a choice
+    # (state.last_user_choice non-empty) -- a NEW chapter is in flight and
+    # the frontend will get fresh chapter_meta when that turn completes.
+    cb_state = existing.state or {}
+    chap_meta = cb_state.get("last_chapter_meta")
+    last_story = cb_state.get("last_story_text") or ""
+    last_choice = (cb_state.get("last_user_choice") or "").strip()
+    if chap_meta and not last_choice:
+        payload = {**chap_meta, "prose": last_story}
+        await manager.send_personal_message({
+            "type": "chapter_meta",
+            "data": payload,
+        }, session_id)
+
+    # Restore pending HITL only if it's actually UNANSWERED (a stale
+    # re-emit resets the frontend's choices/pendingQuestions to [] even
+    # when the chapter_meta above just populated them).
+    try:
+        pending_fc_id, req_msg = find_pending_interrupt(existing)
+        if pending_fc_id is not None:
+            logger.info(
+                "Re-emitting genuinely-pending HITL '%s' for resumed session %s",
+                pending_fc_id, session_id,
+            )
+            await manager.send_personal_message({
+                "type": "request_input",
+                "interrupt_id": pending_fc_id,
+                "message": req_msg,
+            }, session_id)
+        else:
+            logger.info("No unanswered HITL on resume for session %s", session_id)
+    except Exception:
+        logger.warning("Could not restore pending HITL for session %s", session_id, exc_info=True)
+
+
+def find_pending_interrupt(existing) -> tuple[str | None, str | None]:
+    """(interrupt_id, message) for the latest UNANSWERED adk_request_input
+    HITL on a session, or (None, None) if none is pending. Collects every
+    adk_request_input function_call, marks answered when a same-id
+    function_response exists, and returns the most recent one that
+    survives. Shared by emit_resume_snapshot (above) and
+    src/demo_tools.py's advance_demo_story, which needs to know whether the
+    visitor's next input resumes a HITL (resume_payload) or submits a
+    chapter choice (message_text) -- same question, same event-log answer.
+    """
+    events = getattr(existing, "events", None) or []
+    answered_ids: set[str] = set()
+    for event in events:
+        if not event.content or not event.content.parts:
+            continue
+        for part in event.content.parts:
+            fr = getattr(part, "function_response", None)
+            if fr and getattr(fr, "name", None) == "adk_request_input":
+                fr_id = getattr(fr, "id", None)
+                if fr_id:
+                    answered_ids.add(fr_id)
+    for event in reversed(events):
+        if not has_request_input_function_call(event):
+            continue
+        ids = get_request_input_interrupt_ids(event)
+        fc_id = ids[0] if ids else None
+        if fc_id and fc_id not in answered_ids:
+            req_msg = "Please provide input."
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    fc = getattr(part, "function_call", None)
+                    if fc and getattr(fc, "id", None) == fc_id:
+                        req_msg = (fc.args or {}).get("message", req_msg)
+                        break
+            return fc_id, req_msg
+    return None, None
+
+
 async def execute_adk_turn(
     session_id: str,
     user_id: str = "local_tester",
@@ -358,6 +467,15 @@ async def execute_adk_turn(
             "type": "turn_complete",
             "invocation_id": last_invocation_id,
         }, session_id)
+
+        # Cross-instance liveness: the socket a visitor is holding open may
+        # live on a different instance than this turn ran on (e.g. this
+        # turn was triggered by a demo tool call from the A2A agent).
+        # Deferred import: notify_bridge imports ws.runner (this module) to
+        # call emit_resume_snapshot, so importing it at module load time
+        # here would be circular.
+        from src.ws.notify_bridge import notify_change
+        await notify_change(session_id, "turn")
 
     except asyncio.CancelledError:
         # Never swallow cancellation — it's how rewinds / disconnects abort

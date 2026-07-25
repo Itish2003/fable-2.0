@@ -18,6 +18,13 @@ class ConnectionManager:
         self.active_connections[session_id] = websocket
         logger.info(f"WebSocket connected for session: {session_id}")
 
+        # Cross-instance liveness bridge (src/ws/notify_bridge.py): starts
+        # this instance's single LISTEN connection on first socket, no-ops
+        # after. Deferred import avoids a module-load cycle (notify_bridge
+        # imports this module's `manager` to check locally-held sessions).
+        from src.ws.notify_bridge import ensure_listener_started
+        await ensure_listener_started()
+
     def disconnect(self, session_id: str):
         """Remove the connection from active pool."""
         if session_id in self.active_connections:

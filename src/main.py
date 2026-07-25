@@ -199,7 +199,7 @@ async def story_websocket(websocket: WebSocket, session_id: str):
         # Reconnecting to an in-progress story with /start injects "Begin Simulation"
         # as a choice response, which corrupts the story flow.
         from src.services.session_manager import session_service
-        from src.ws.runner import _emit_state_update
+        from src.ws.runner import emit_resume_snapshot
         existing = None
         try:
             existing = await session_service.get_session(
@@ -233,108 +233,15 @@ async def story_websocket(websocket: WebSocket, session_id: str):
             ))
             manager.register_task(session_id, task)
         else:
-            # Resumed session: push current state so the sidebar populates immediately.
-            await _emit_state_update(session_id=session_id, user_id="local_tester")
+            # Resumed session (including a NOTIFY-triggered re-emit landing
+            # on this same instance, e.g. a demo tool's engine action):
+            # push current state, the last chapter if one is waiting on a
+            # choice, and any genuinely-pending HITL. Extracted to
+            # src/ws/runner.py:emit_resume_snapshot so the cross-instance
+            # NOTIFY bridge (src/ws/notify_bridge.py) can reuse the exact
+            # same DB-state rebuild instead of duplicating this logic.
+            await emit_resume_snapshot(session_id, user_id="local_tester", existing=existing)
 
-            # Re-emit the most recent chapter as a single chapter_meta
-            # frame containing prose + choices + questions. Post-refactor
-            # streaming is gone; the prose ships in `data.prose` and the
-            # frontend renders it atomically (no append-vs-replace logic
-            # needed, no is_snapshot flag).
-            #
-            # Two cases this covers:
-            #   (a) Player reloaded mid-game with a chapter waiting for
-            #       their choice. Without this, the chapter would be
-            #       blank on F5.
-            #   (b) Previous workflow crashed mid-archivist before
-            #       runner._emit_chapter_meta could fire. The auditor
-            #       had already written state.last_chapter_meta and
-            #       storyteller_merge had written state.last_story_text
-            #       so the data exists -- just never reached the WS.
-            # We skip when the user has already submitted a choice
-            # (state.last_user_choice non-empty) -- a NEW chapter is in
-            # flight and the frontend will get fresh chapter_meta when
-            # that turn completes.
-            cb_state = existing.state or {}
-            chap_meta = cb_state.get("last_chapter_meta")
-            last_story = cb_state.get("last_story_text") or ""
-            last_choice = (cb_state.get("last_user_choice") or "").strip()
-            if chap_meta and not last_choice:
-                payload = {**chap_meta, "prose": last_story}
-                await manager.send_personal_message({
-                    "type": "chapter_meta",
-                    "data": payload,
-                }, session_id)
-
-            # Restore pending HITL only if it's actually UNANSWERED.
-            # The previous heuristic ("last request_input function_call in
-            # reverse order") was wrong: it picked the most recent fc
-            # regardless of whether a function_response with the same id
-            # had already been recorded. For a chapter-mid session where
-            # all setup HITLs were answered ages ago, that re-emitted a
-            # stale setup_world_primer request_input on every reload,
-            # which the frontend's request_input handler treats as a NEW
-            # pause and resets choices/pendingQuestions to []. Net effect:
-            # the chapter_meta we just emitted got wiped.
-            # Correct logic: collect every adk_request_input function_call,
-            # mark answered when a same-id function_response exists, and
-            # only re-emit if the most recent UNANSWERED one survives.
-            try:
-                from google.adk.workflow.utils._workflow_hitl_utils import (  # noqa: PLC2701
-                    has_request_input_function_call,
-                    get_request_input_interrupt_ids,
-                )
-                events = getattr(existing, "events", None) or []
-                # First pass: collect all answered fc ids.
-                answered_ids: set[str] = set()
-                for event in events:
-                    if not event.content or not event.content.parts:
-                        continue
-                    for part in event.content.parts:
-                        fr = getattr(part, "function_response", None)
-                        if fr and getattr(fr, "name", None) == "adk_request_input":
-                            fr_id = getattr(fr, "id", None)
-                            if fr_id:
-                                answered_ids.add(fr_id)
-                # Second pass: walk events in reverse, find the latest
-                # unanswered request_input function_call.
-                pending_event = None
-                pending_fc_id: str | None = None
-                for event in reversed(events):
-                    if not has_request_input_function_call(event):
-                        continue
-                    ids = get_request_input_interrupt_ids(event)
-                    fc_id = ids[0] if ids else None
-                    if fc_id and fc_id not in answered_ids:
-                        pending_event = event
-                        pending_fc_id = fc_id
-                        break
-                if pending_event is not None and pending_fc_id is not None:
-                    req_msg = "Please provide input."
-                    if pending_event.content and pending_event.content.parts:
-                        for part in pending_event.content.parts:
-                            fc = getattr(part, "function_call", None)
-                            if fc and getattr(fc, "id", None) == pending_fc_id:
-                                req_msg = (fc.args or {}).get("message", req_msg)
-                                break
-                    logger.info(
-                        "Re-emitting genuinely-pending HITL '%s' for resumed session %s",
-                        pending_fc_id, session_id,
-                    )
-                    await manager.send_personal_message({
-                        "type": "request_input",
-                        "interrupt_id": pending_fc_id,
-                        "message": req_msg,
-                    }, session_id)
-                else:
-                    logger.info(
-                        "No unanswered HITL on resume for session %s "
-                        "(all %d adk_request_input fcalls have responses)",
-                        session_id, len(answered_ids),
-                    )
-            except Exception:
-                logger.warning("Could not restore pending HITL for session %s", session_id, exc_info=True)
-        
         while True:
             # Wait for client messages
             data = await websocket.receive_json()

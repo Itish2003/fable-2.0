@@ -36,3 +36,22 @@ def normalize_db_url(raw_url: str) -> tuple[str, dict]:
     clean_url = urlunsplit((scheme, parts.netloc, parts.path, urlencode(query_pairs), parts.fragment))
     connect_args = {"ssl": "require"} if sslmode else {}
     return clean_url, connect_args
+
+
+def bare_asyncpg_dsn(raw_url: str) -> tuple[str, dict]:
+    """Same normalization, but for raw `asyncpg.connect()`/`create_pool()`
+    calls (spend_guard.py, ws/notify_bridge.py) rather than SQLAlchemy --
+    those want a bare "postgresql://" DSN; asyncpg's own connect() doesn't
+    understand a "+asyncpg" (or any "+driver") suffix, and callers here may
+    well be reusing this project's own DATABASE_URL, which carries that
+    suffix for SQLAlchemy's benefit (src/database.py) -- so strip it, not
+    just normalize a bare "postgres"/"postgresql" scheme."""
+    parts = urlsplit(raw_url)
+    query_pairs = dict(parse_qsl(parts.query))
+    sslmode = query_pairs.pop("sslmode", None)
+    scheme = parts.scheme.split("+", 1)[0]
+    if scheme not in ("postgresql", "postgres"):
+        scheme = "postgresql"
+    dsn = f"{scheme}://{parts.netloc}{parts.path}"
+    connect_kwargs = {"ssl": "require"} if sslmode else {}
+    return dsn, connect_kwargs

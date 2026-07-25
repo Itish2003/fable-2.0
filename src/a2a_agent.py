@@ -275,18 +275,26 @@ async def run_agent_turn(history: list[dict[str, str]]) -> str:
 
     async with httpx.AsyncClient() as client:
         for _ in range(4):  # cap tool-call round trips
-            try:
-                data = await _chat_once(client, LOCAL_BASE_URL, LOCAL_MODEL_ID, None, messages)
-            except Exception as err:
-                if not _is_infra_error(err):
-                    raise
-                logger.warning(
-                    "model chain: %s unreachable (%s), degrading to %s",
-                    LOCAL_MODEL_ID, err, DEEPSEEK_MODEL_ID,
-                )
+            if MODEL_PRESET == "deepseek":
+                # Explicit override: skip the local attempt entirely (e.g. the
+                # friend's box is known-busy) rather than paying its timeout
+                # on every turn before degrading anyway.
                 if not DEEPSEEK_API_KEY:
-                    return "The primary model is unreachable and no fallback API key is configured."
+                    return "MODEL_PRESET=deepseek but no DEEPSEEK_API_KEY is configured."
                 data = await _chat_once(client, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, DEEPSEEK_API_KEY, messages)
+            else:
+                try:
+                    data = await _chat_once(client, LOCAL_BASE_URL, LOCAL_MODEL_ID, None, messages)
+                except Exception as err:
+                    if not _is_infra_error(err):
+                        raise
+                    logger.warning(
+                        "model chain: %s unreachable (%s), degrading to %s",
+                        LOCAL_MODEL_ID, err, DEEPSEEK_MODEL_ID,
+                    )
+                    if not DEEPSEEK_API_KEY:
+                        return "The primary model is unreachable and no fallback API key is configured."
+                    data = await _chat_once(client, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, DEEPSEEK_API_KEY, messages)
 
             choice = data["choices"][0]["message"]
             tool_calls = choice.get("tool_calls")

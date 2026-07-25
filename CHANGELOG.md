@@ -2,6 +2,13 @@
 
 All notable changes to Fable 2.0. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v2.2 — Deployed on Vercel] — 2026-07-25
+
+Fable 2.0 (engine + its in-process A2A agent + the frontend demo, all one
+FastAPI app) now deploys to Vercel: https://fable20.vercel.app. Neon
+(pgvector-enabled) replaces the local/compose Postgres in production.
+GitHub-connected for CI/CD -- pushes to `main` deploy automatically.
+
 ## [v2.1 — V1 Vision Alignment: Living Bible + Literary Prose] — 2026-05-08
 
 A staged port of the FableWeaver v1 prose-quality bar onto the v2 ADK 2.0 graph.

@@ -19,11 +19,13 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+
+from src.spend_guard import check_spend, client_ip, record_usage
 
 logger = logging.getLogger("fable.a2a_agent")
 
@@ -293,9 +295,22 @@ async def _chat_once(client: httpx.AsyncClient, base_url: str, model: str, api_k
     return res.json()
 
 
-async def run_agent_turn(history: list[dict[str, str]]) -> str:
+class TurnResult(NamedTuple):
+    reply: str
+    input_tokens: int
+    output_tokens: int
+
+
+def _accumulate_usage(data: dict, usage: dict) -> None:
+    u = data.get("usage") or {}
+    usage["input_tokens"] += u.get("prompt_tokens", 0) or 0
+    usage["output_tokens"] += u.get("completion_tokens", 0) or 0
+
+
+async def run_agent_turn(history: list[dict[str, str]]) -> TurnResult:
     """history: list of {"role": "user"|"assistant", "content": str}."""
     messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}, *history]
+    usage = {"input_tokens": 0, "output_tokens": 0}
 
     async with httpx.AsyncClient() as client:
         for _ in range(4):  # cap tool-call round trips
@@ -304,7 +319,7 @@ async def run_agent_turn(history: list[dict[str, str]]) -> str:
                 # friend's box is known-busy) rather than paying its timeout
                 # on every turn before degrading anyway.
                 if not DEEPSEEK_API_KEY:
-                    return "MODEL_PRESET=deepseek but no DEEPSEEK_API_KEY is configured."
+                    return TurnResult("MODEL_PRESET=deepseek but no DEEPSEEK_API_KEY is configured.", **usage)
                 data = await _chat_once(client, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, DEEPSEEK_API_KEY, messages)
             else:
                 try:
@@ -317,13 +332,14 @@ async def run_agent_turn(history: list[dict[str, str]]) -> str:
                         LOCAL_MODEL_ID, err, DEEPSEEK_MODEL_ID,
                     )
                     if not DEEPSEEK_API_KEY:
-                        return "The primary model is unreachable and no fallback API key is configured."
+                        return TurnResult("The primary model is unreachable and no fallback API key is configured.", **usage)
                     data = await _chat_once(client, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, DEEPSEEK_API_KEY, messages)
 
+            _accumulate_usage(data, usage)
             choice = data["choices"][0]["message"]
             tool_calls = choice.get("tool_calls")
             if not tool_calls:
-                return choice.get("content") or ""
+                return TurnResult(choice.get("content") or "", **usage)
 
             # Providers attach non-standard extra fields to "thinking" output
             # (DeepSeek: reasoning_content, others: reasoning). Replaying one
@@ -354,7 +370,7 @@ async def run_agent_turn(history: list[dict[str, str]]) -> str:
                         "content": json.dumps(result),
                     }
                 )
-        return "Reached the tool-call round limit without a final answer."
+        return TurnResult("Reached the tool-call round limit without a final answer.", **usage)
 
 
 # ---------------------------------------------------------------------------
@@ -385,8 +401,10 @@ async def root_redirect():
     return RedirectResponse(url="/agent")
 
 
-def _rpc_error(rpc_id: Any, code: int, message: str) -> JSONResponse:
-    return JSONResponse({"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}})
+def _rpc_error(rpc_id: Any, code: int, message: str, status: int = 200) -> JSONResponse:
+    return JSONResponse(
+        {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}, status_code=status
+    )
 
 
 @router.post("/a2a")
@@ -409,15 +427,37 @@ async def a2a_send_message(request: Request):
     if not text:
         return _rpc_error(rpc_id, -32602, "Invalid params: no text parts in message")
 
+    # Spend guard (ported from the portfolio's agent/lib/spend-guard.ts, same
+    # Neon ledger as the portfolio and rac origins): a fresh contextId means
+    # a new session, same caveat as rac's port -- a hostile caller can dodge
+    # the per-IP session cap by minting a new contextId every request, but
+    # the token ceilings still bound total spend regardless.
+    new_session = not message.get("contextId")
+    try:
+        verdict = await check_spend(client_ip(request.headers), new_session)
+        if not verdict.allowed:
+            return _rpc_error(
+                rpc_id, -32000, f"Over today's budget ({verdict.reason}). Come back tomorrow.", status=403
+            )
+    except Exception as err:
+        # Ledger unreachable != policy violation: fail OPEN on infra errors.
+        logger.warning("spend-guard: ledger unavailable, letting request pass: %s", err)
+
     context_id = message.get("contextId") or str(uuid.uuid4())
     history = CONTEXT_HISTORY.setdefault(context_id, [])
     history.append({"role": "user", "content": text})
 
     try:
-        reply_text = await run_agent_turn(history)
+        turn = await run_agent_turn(history)
     except Exception as e:
         logger.exception("agent turn failed")
         return _rpc_error(rpc_id, -32603, f"agent turn failed: {e}")
+
+    reply_text = turn.reply
+    try:
+        await record_usage(turn.input_tokens, turn.output_tokens)
+    except Exception as err:
+        logger.warning("spend-guard: usage recording failed: %s", err)
 
     history.append({"role": "assistant", "content": reply_text})
 

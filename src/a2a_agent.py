@@ -48,7 +48,7 @@ CARD: dict[str, Any] = {
         "its architecture, the Suspicion Engine, event-sourced rewind, or "
         "the parallel LoreHunter research swarm."
     ),
-    "version": "2.1.0",
+    "version": "2.2.0",
     "supportedInterfaces": [
         {
             "url": f"{A2A_BASE_URL}/a2a",
@@ -166,7 +166,10 @@ CARD: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 MODEL_PRESET = os.getenv("MODEL_PRESET", "local")
-LOCAL_BASE_URL = os.getenv("LOCAL_MODEL_BASE_URL", "https://metres-permit-thumbs-procedure.trycloudflare.com/v1")
+# No default: an ephemeral tunnel URL baked in here would go stale the
+# moment the tunnel restarts. Prod sets LOCAL_MODEL_BASE_URL explicitly;
+# when it's unset the local attempt is skipped (see run_agent_turn below).
+LOCAL_BASE_URL = os.getenv("LOCAL_MODEL_BASE_URL")
 LOCAL_MODEL_ID = "gemma4:12b"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 DEEPSEEK_MODEL_ID = "deepseek-v4-flash"
@@ -258,7 +261,10 @@ TOOLS = [
             "description": (
                 "Submit the next input to the CURRENTLY OPEN demo story (a premise, a "
                 "setup answer, or a chapter choice) and run one real engine turn. Call "
-                "start_demo_story first if no demo story is open yet in this conversation."
+                "start_demo_story first if no demo story is open yet in this conversation. "
+                f"Counts against the same {demo_tools.MAX_ENGINE_TURNS_PER_CONTEXT}-turn "
+                "engine-turn budget shared with start_demo_story and rewind_demo_story for "
+                "this conversation."
             ),
             "parameters": {
                 "type": "object",
@@ -280,7 +286,12 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "rewind_demo_story",
-            "description": "Undo the most recent turn of the currently open demo story (like the UI's Undo button).",
+            "description": (
+                "Undo the most recent turn of the currently open demo story (like the UI's "
+                "Undo button). Counts against the same "
+                f"{demo_tools.MAX_ENGINE_TURNS_PER_CONTEXT}-turn engine-turn budget shared "
+                "with start_demo_story and advance_demo_story for this conversation."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -409,6 +420,12 @@ async def run_agent_turn(history: list[dict[str, str]]) -> TurnResult:
                 # on every turn before degrading anyway.
                 if not DEEPSEEK_API_KEY:
                     return TurnResult("MODEL_PRESET=deepseek but no DEEPSEEK_API_KEY is configured.", **usage)
+                data = await _chat_once(client, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, DEEPSEEK_API_KEY, messages)
+            elif not LOCAL_BASE_URL:
+                # No local endpoint configured -- skip straight to the fallback
+                # instead of attempting a request with a missing base URL.
+                if not DEEPSEEK_API_KEY:
+                    return TurnResult("No local model endpoint is configured (LOCAL_MODEL_BASE_URL unset) and no fallback API key is configured.", **usage)
                 data = await _chat_once(client, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL_ID, DEEPSEEK_API_KEY, messages)
             else:
                 try:

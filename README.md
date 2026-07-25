@@ -11,6 +11,15 @@
 > [`docs/vision.md`](docs/vision.md) for the design targets and
 > [`CHANGELOG.md`](CHANGELOG.md) for per-phase deliverables.
 
+## 🚀 Deployed
+
+Live at **[fable20.vercel.app](https://fable20.vercel.app)**:
+
+*   **Agent chat:** [`/agent`](https://fable20.vercel.app/agent) — a project-aware A2A agent that can talk about the architecture and, on request, drive a real live demo story.
+*   **A2A endpoint:** `/a2a` (JSON-RPC `SendMessage`), agent card at [`/.well-known/agent-card.json`](https://fable20.vercel.app/.well-known/agent-card.json).
+*   **Story frontend:** served same-origin at [`/demo/`](https://fable20.vercel.app/demo/).
+*   A Postgres `LISTEN`/`NOTIFY` bridge pushes engine updates to any open story view live.
+*   A shared spend guard (Neon Postgres) rate-limits sessions and tokens across all visitors.
 
 Fable 2.0 is a complete architectural paradigm shift from traditional "prompt-chained" AI Dungeon Masters. Built entirely on the **Google ADK 2.0 Beta** framework, it abandons fragile `while` loops and monolithic prompts in favor of a strictly typed Directed Acyclic Graph (DAG), native map-reduce research swarms, and an event-sourced timeline.
 
@@ -44,7 +53,7 @@ It acts as an uncompromising AI Game Master, utilizing a multi-agent tool-callin
 
 ---
 
-## 🛠️ Local Setup Instructions
+## 🛠️ Local Development
 
 ### 1. Prerequisites
 - **Python 3.12+**

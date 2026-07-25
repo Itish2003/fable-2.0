@@ -191,8 +191,31 @@ footer { color: var(--trace); font-size: var(--fs-small); border-top: 1px dashed
       if (!reply) throw new Error("malformed reply");
       contextId = reply.contextId || contextId;
       ctxEl.textContent = contextId ? "a2a context " + contextId.slice(0, 8) : "no context yet";
-      var replyText = (reply.parts || []).map(function (p) { return p.text || ""; }).join("\n").trim();
-      addMsg("assistant", replyText || "(empty reply)");
+      var parts = reply.parts || [];
+      var textParts = parts.filter(function (p) { return p.mediaType !== "application/x-portfolio-live-session+json"; });
+      var livePart = parts.find(function (p) { return p.mediaType === "application/x-portfolio-live-session+json"; });
+      var replyText = textParts.map(function (p) { return p.text || ""; }).join("\n").trim();
+      var msgWrap = addMsg("assistant", replyText || "(empty reply)");
+      if (livePart) {
+        try {
+          var pointer = JSON.parse(livePart.text);
+          var url = pointer && pointer.url;
+          var isSafeUrl = typeof url === "string" && (url.indexOf("/") === 0 || url.indexOf(location.origin) === 0);
+          if (isSafeUrl) {
+            var liveLine = document.createElement("div");
+            liveLine.className = "text live-session";
+            var liveLink = document.createElement("a");
+            liveLink.href = url;
+            liveLink.target = "_blank";
+            liveLink.rel = "noopener";
+            liveLink.textContent = "● LIVE — " + (pointer.note || "open the live demo");
+            liveLine.appendChild(liveLink);
+            msgWrap.appendChild(liveLine);
+          }
+        } catch (e) {
+          // malformed live-session pointer; ignore silently, text reply already rendered
+        }
+      }
     } catch (err) {
       addMsg("assistant", "Couldn't reach the agent: " + err.message, true);
       setError(err.message);

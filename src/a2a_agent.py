@@ -18,13 +18,16 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 logger = logging.getLogger("fable.a2a_agent")
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 A2A_BASE_URL = os.getenv("A2A_BASE_URL", "http://localhost:8001")
 DEMO_URL = os.getenv("DEMO_URL", "http://localhost:5173")
@@ -334,6 +337,20 @@ router = APIRouter()
 @router.get("/.well-known/agent-card.json")
 async def agent_card():
     return JSONResponse(CARD)
+
+
+@router.get("/agent")
+async def agent_chat_page():
+    """Self-contained static chat UI: fetches the card client-side, talks
+    to /a2a directly. No templating, no build step (src/static/agent.html)."""
+    return FileResponse(STATIC_DIR / "agent.html")
+
+
+@router.get("/")
+async def root_redirect():
+    # The engine doesn't otherwise use "/" (see src/main.py) — send visitors
+    # straight to the human-facing chat interface.
+    return RedirectResponse(url="/agent")
 
 
 def _rpc_error(rpc_id: Any, code: int, message: str) -> JSONResponse:

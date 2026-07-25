@@ -1,0 +1,18 @@
+# The Vercel deploy is the Python engine + agent (src/) plus the
+# already-built frontend/dist static demo. None of the following are
+# needed at deploy time and together they bloat the upload past what
+# `vercel deploy` tolerates (repo is ~1.4GB with these included).
+.venv
+eve-agent
+frontend/node_modules
+frontend/src
+frontend/public
+data
+docs
+adk
+scripts
+.git
+.cursor
+.gemini
+.code-review-graph
+/*.html

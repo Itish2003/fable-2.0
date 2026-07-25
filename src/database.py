@@ -2,12 +2,15 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from dotenv import load_dotenv
 
+from src.db_url import normalize_db_url
+
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://itish@localhost/fable2_0")
+_raw_database_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://itish@localhost/fable2_0")
+DATABASE_URL, _connect_args = normalize_db_url(_raw_database_url)
 
 # 1. Initialize the Engine for our local Lore tables (pgvector, NetworkX edges)
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(DATABASE_URL, echo=False, connect_args=_connect_args)
 
 # 2. Create the Session Maker
 AsyncSessionLocal = async_sessionmaker(

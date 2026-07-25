@@ -4,16 +4,20 @@ from google.adk.sessions.database_session_service import DatabaseSessionService
 from google.adk.platform import uuid as adk_uuid
 from dotenv import load_dotenv
 
+from src.db_url import normalize_db_url
+
 load_dotenv()
 
 # We leverage the DATABASE_URL from our .env
 # ADK 2.0 DatabaseSessionService handles its own SQLAlchemy engine initialization
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://itish@localhost/fable2_0")
+_raw_database_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://itish@localhost/fable2_0")
+DATABASE_URL, _connect_args = normalize_db_url(_raw_database_url)
 
 # 1. Initialize the ADK Session Service
 # This service handles native ADK 2.0 session persistence, checkpoints, and event history.
-# It expects a db_url string, not an engine object.
-session_service = DatabaseSessionService(db_url=DATABASE_URL)
+# It expects a db_url string, not an engine object. **kwargs (connect_args
+# included) forward straight into its own create_async_engine call.
+session_service = DatabaseSessionService(db_url=DATABASE_URL, connect_args=_connect_args)
 
 async def create_fable_session(user_id: str, parent_session_id: str = None) -> str:
     """

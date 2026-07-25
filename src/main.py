@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from src.database import init_db
 from src.ws.manager import manager
 from src.ws.runner import execute_adk_turn
+from src.a2a_agent import router as a2a_router
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +38,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# fable-2.0's real A2A project agent: /.well-known/agent-card.json + /a2a,
+# in-process (same uvicorn worker, same event loop as the engine above).
+app.include_router(a2a_router)
 
 class CreateStoryRequest(BaseModel):
     user_id: str = "local_tester" # Match frontend string

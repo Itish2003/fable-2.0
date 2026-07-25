@@ -204,7 +204,7 @@ TOOLS = [
     },
 ]
 
-ENGINE_ORIGIN = "http://127.0.0.1:8001"
+ENGINE_ORIGIN = os.getenv("ENGINE_ORIGIN", "http://127.0.0.1:8001")
 
 
 async def _tool_engine_status(args: dict[str, Any]) -> dict[str, Any]:

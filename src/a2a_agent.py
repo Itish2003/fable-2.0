@@ -44,8 +44,11 @@ envelope — an error frame is always terminal. Clients must not rely on
 connection close. `: keep-alive` comments go out during long tool awaits
 so intermediaries don't reap a silent stream.
 
-Client note: this is a POST, so the browser side must be fetch() +
-ReadableStream. EventSource cannot POST.
+Client notes: this is a POST, so the browser side must be fetch() +
+ReadableStream — EventSource cannot POST. And a request rejected BEFORE
+the stream opens (over budget, invalid params) still answers with a plain
+JSON-RPC error and content-type application/json, so branch on the
+response content-type before parsing SSE.
 """
 
 import asyncio
@@ -1075,8 +1078,11 @@ async def _send_streaming_message(request: Request, rpc: dict[str, Any]):
         finally:
             # A browser closing the stream mid-flight must not lose spend
             # accounting, nor leave a user message in CONTEXT_HISTORY with
-            # no assistant reply after it.
-            history.append({"role": "assistant", "content": reply_text})
+            # no assistant reply after it. Skip an EMPTY reply though:
+            # replaying {"role":"assistant","content":""} on the next turn
+            # in this context 400s on some providers.
+            if reply_text:
+                history.append({"role": "assistant", "content": reply_text})
             try:
                 await record_usage(input_tokens, output_tokens)
             except Exception as err:

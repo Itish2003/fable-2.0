@@ -16,10 +16,20 @@
 Live at **[fable20.vercel.app](https://fable20.vercel.app)**:
 
 *   **Agent chat:** [`/agent`](https://fable20.vercel.app/agent) — a project-aware A2A agent that can talk about the architecture and, on request, drive a real live demo story.
-*   **A2A endpoint:** `/a2a` (JSON-RPC `SendMessage`), agent card at [`/.well-known/agent-card.json`](https://fable20.vercel.app/.well-known/agent-card.json).
+*   **A2A endpoint:** `/a2a` (JSON-RPC `SendMessage`, plus `SendStreamingMessage` when enabled — see below), agent card at [`/.well-known/agent-card.json`](https://fable20.vercel.app/.well-known/agent-card.json).
 *   **Story frontend:** served same-origin at [`/demo/`](https://fable20.vercel.app/demo/).
 *   A Postgres `LISTEN`/`NOTIFY` bridge pushes engine updates to any open story view live.
 *   A shared spend guard (Neon Postgres) rate-limits sessions and tokens across all visitors.
+
+### A2A streaming and handback (env)
+
+| Var | Default | What it does |
+| --- | --- | --- |
+| `A2A_STREAMING_ENABLED` | `0` (off) | Enables `SendStreamingMessage` (SSE) **and** flips `capabilities.streaming` on the card — one switch, so the card can never advertise what the deploy won't serve. Ships off: whether Vercel's Python runtime streams an ASGI body incrementally or buffers it has to be verified on the real deployment before this is turned on. |
+| `PORTFOLIO_AGENT_CARD_URL` | unset | Where the portfolio root agent's card lives, e.g. `https://<portfolio-host>/.well-known/agent-card.json`. The JSON-RPC URL is discovered from that card at runtime; no host is hardcoded. Unset → the `ask_portfolio` handback tool politely declines instead of calling anything. |
+| `HANDBACK_TIMEOUT_SECONDS` | `170` | Outbound read budget for a handback. A handback is ≥2 nested model turns, and this whole function is capped at `maxDuration: 300` (`vercel.json`) with a wrapping model turn still to come — so it cannot use the 540s the portfolio's own bridge allows. |
+| `HANDBACK_MAX_PER_CONTEXT` | `1` | Handbacks per A2A conversation. |
+| `HANDBACK_MAX_PER_MINUTE` | `3` | Per-instance ceiling; the layer that bounds a runaway portfolio ⇄ fable cycle, since each hop mints a new `contextId`. See the loop-safety notes in [`src/handback.py`](src/handback.py). |
 
 Fable 2.0 is a complete architectural paradigm shift from traditional "prompt-chained" AI Dungeon Masters. Built entirely on the **Google ADK 2.0 Beta** framework, it abandons fragile `while` loops and monolithic prompts in favor of a strictly typed Directed Acyclic Graph (DAG), native map-reduce research swarms, and an event-sourced timeline.
 
